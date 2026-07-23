@@ -1,0 +1,9 @@
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":1,"type":"run.begin","data":{"taskId":"fixture-readme","instruction":"Read README.md and report the fixture project name."}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":2,"type":"step.begin","data":{"step":1}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":3,"type":"tool.call","data":{"step":1,"callId":"call-read-readme","name":"read_file","input":{"path":"README.md"}}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":4,"type":"tool.result","data":{"step":1,"callId":"call-read-readme","name":"read_file","result":{"ok":true,"output":{"path":"README.md","content":"# RepoCircuit Fixture\n\nThis tiny repository is the deterministic Week 1 fixture.\n\nIts only job is to prove that the runtime really asks a provider for a tool,\nexecutes `read_file`, feeds the result back, and reaches `end_turn`.\n\n"}}}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":5,"type":"step.end","data":{"step":1,"reason":"tool_use"}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":6,"type":"step.begin","data":{"step":2}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":7,"type":"assistant.final","data":{"step":2,"text":"Fixture README read successfully: RepoCircuit Fixture."}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":8,"type":"step.end","data":{"step":2,"reason":"end_turn"}}
+{"schemaVersion":1,"runId":"fixture-readme-run","seq":9,"type":"run.end","data":{"status":"completed","steps":2}}

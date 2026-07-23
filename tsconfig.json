@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@repo-circuit/core": ["packages/core/src/index.ts"],
+      "@repo-circuit/providers": ["packages/providers/src/index.ts"],
+      "@repo-circuit/tools": ["packages/tools/src/index.ts"],
+      "@repo-circuit/trace": ["packages/trace/src/index.ts"]
+    },
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

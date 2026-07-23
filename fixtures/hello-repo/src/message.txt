@@ -1,0 +1,2 @@
+The fixture is intentionally small and has no external dependencies.
+

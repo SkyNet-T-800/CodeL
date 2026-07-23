@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "fixture-readme",
+  "title": "Read the fixture README",
+  "instruction": "Read README.md and report the fixture project name.",
+  "workspace": {
+    "root": "."
+  },
+  "constraints": {
+    "allowedTools": ["read_file"]
+  },
+  "budget": {
+    "maxSteps": 4
+  }
+}

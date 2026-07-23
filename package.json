@@ -1,0 +1,31 @@
+{
+  "name": "repo-circuit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Week 1 reference implementation of a deterministic coding-agent runtime skeleton.",
+  "type": "module",
+  "packageManager": "pnpm@10.25.0",
+  "engines": {
+    "node": ">=22.12",
+    "pnpm": ">=10 <11"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "dev": "tsx apps/cli/src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "smoke:w1": "pnpm build && pnpm exec repo-circuit run --task fixtures/hello-repo/task.json --trace .traces/fixture-run.jsonl --run-id fixture-readme-run",
+    "trace:check": "node scripts/check-trace.mjs .traces/fixture-run.jsonl fixtures/hello-repo/expected/trace.jsonl fixtures/hello-repo/expected/final-result.json",
+    "verify": "pnpm typecheck && pnpm test && pnpm smoke:w1 && pnpm trace:check"
+  },
+  "devDependencies": {
+    "@repo-circuit/cli": "workspace:*",
+    "@types/node": "22.20.1",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
