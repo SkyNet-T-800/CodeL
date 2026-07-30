@@ -34,11 +34,14 @@ export interface ToolDefinition {
     readonly name: string;
     readonly description: string;
     readonly inputSchema: JsonObject;
+    readonly outputSchema?: JsonObject;
+    readonly annotations?: JsonObject;
 }
 
 export interface AgentError {
     readonly code: string;
     readonly message: string;
+    readonly details?: JsonObject;
 }
 
 export type ToolExecutionResult = 

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { RegisteredTool } from "@repo-circuit/core";
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -7,6 +8,19 @@ import {
   type ExecutableTool,
   type JsonObject
 } from "@repo-circuit/core";
+
+import { treeToolRegistration } from "./tree.js";
+import { symbolsToolRegistration } from "./symbols.js";
+import { applyPatchToolRegistration } from "./apply-patch.js";
+import { readFileBytes } from "./text-file.js";
+
+export * from "./symbols.js";
+export * from "./text-file.js";
+export * from "./tree.js";
+export * from "./apply-patch.js";
+export * from "./text-file.js";
+export * from "./hash.js";
+export * from "./read.js";
 
 interface ReadFileInput {
   readonly path: string;
@@ -65,3 +79,7 @@ const readFileTool: ExecutableTool<ReadFileInput> = {
 
 export const readFileToolRegistration = registerTool(readFileTool);
 
+export const weekTwoToolRegistrations: readonly RegisteredTool[] = [
+  treeToolRegistration,
+  symbolsToolRegistration
+]
