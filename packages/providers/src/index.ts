@@ -92,3 +92,6 @@ export function createWeekOneMockProvider(): WeekOneMockProvider {
   return new WeekOneMockProvider();
 }
 
+export * from "./fake-streaming-provider.js";
+export * from "./openai-compatible-provider.js";
+

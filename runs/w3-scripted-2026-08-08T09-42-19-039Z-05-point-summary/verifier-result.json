@@ -1,0 +1,10 @@
+{
+  "passed": false,
+  "summary": "greetPoint mismatch: expected \"Ada: (2, -4)\", received \" Ada : 2,-4\"",
+  "testResult": {
+    "status": "failed",
+    "exitCode": 1,
+    "summary": "greetPoint mismatch: expected \"Ada: (2, -4)\", received \" Ada : 2,-4\"",
+    "durationMs": 105
+  }
+}

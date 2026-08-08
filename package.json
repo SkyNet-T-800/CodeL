@@ -15,6 +15,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "smoke:w1": "pnpm build && pnpm exec repo-circuit run --task fixtures/hello-repo/task.json --trace .traces/fixture-run.jsonl --run-id fixture-readme-run",
+    "smoke:w3": "pnpm build && node scripts/run-w3-smoke.mjs --provider scripted",
+    "smoke:w3:real": "pnpm build && node scripts/run-w3-smoke.mjs --provider openai",
+    "smoke:w3:check": "pnpm build && node scripts/check-w3-runs.mjs runs",
     "trace:check": "node scripts/check-trace.mjs .traces/fixture-run.jsonl fixtures/hello-repo/expected/trace.jsonl fixtures/hello-repo/expected/final-result.json",
     "verify": "pnpm typecheck && pnpm test && pnpm smoke:w1 && pnpm trace:check"
   },

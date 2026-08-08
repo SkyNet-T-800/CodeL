@@ -1,0 +1,12 @@
+diff --git a/src/clamp.mjs b/src/clamp.mjs
+index 9ff965c..a804f1d 100644
+--- a/src/clamp.mjs
++++ b/src/clamp.mjs
+@@ -1,3 +1,6 @@
+ export function clamp(value, min, max) {
+-  return value;
++  if (min > max) {
++    throw new RangeError("min must not exceed max");
++  }
++  return Math.min(max, Math.max(min, value));
+ }

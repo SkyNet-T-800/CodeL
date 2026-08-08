@@ -1,0 +1,36 @@
+[
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "02-read", "name": "read", "input": { "path": "src/calculator.mjs" } }
+    ],
+    "usage": { "inputTokens": 130, "outputTokens": 20, "totalTokens": 150, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      {
+        "id": "02-patch",
+        "name": "apply_patch",
+        "input": {
+          "path": "src/calculator.mjs",
+          "baseHash": "3e1997e1dd72b7bc9e7bcbdf91506a993bef58cb7e0a4afc1399a49312d2a80d",
+          "patch": "diff --git a/src/calculator.mjs b/src/calculator.mjs\n--- a/src/calculator.mjs\n+++ b/src/calculator.mjs\n@@ -1,3 +1,3 @@\n export function add(left, right) {\n-  return left - right;\n+  return left + right;\n }\n"
+        }
+      }
+    ],
+    "usage": { "inputTokens": 190, "outputTokens": 45, "totalTokens": 235, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "02-test", "name": "exec", "input": { "profile": "test" } }
+    ],
+    "usage": { "inputTokens": 230, "outputTokens": 20, "totalTokens": 250, "complete": true }
+  },
+  {
+    "kind": "end_turn",
+    "text": "Corrected add to use addition and verified all smoke cases.",
+    "usage": { "inputTokens": 260, "outputTokens": 22, "totalTokens": 282, "complete": true }
+  }
+]

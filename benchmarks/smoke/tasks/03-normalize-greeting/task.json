@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "w3-normalize-greeting",
+  "title": "Normalize greeting input",
+  "instruction": "Update greet(name) in src/greeting.mjs. Trim surrounding whitespace; if the trimmed name is empty, return Hello, stranger!. Preserve the existing punctuation and run tests.",
+  "workspace": { "root": "workspace" },
+  "constraints": {
+    "allowedTools": ["tree", "read", "symbols", "apply_patch", "diff", "exec"]
+  },
+  "budget": {
+    "maxSteps": 7,
+    "tokenBudget": 14000,
+    "maxToolCalls": 12,
+    "wallClockBudgetMs": 120000
+  },
+  "attribution": {
+    "baseSha": "044437bf8e3488adb3a5b61a6cd98f208c5dd1b8",
+    "fixtureVersion": "w3-smoke-v1"
+  }
+}

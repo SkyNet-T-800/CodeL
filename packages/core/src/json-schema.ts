@@ -101,6 +101,20 @@ function schemaArray(
     return value as readonly JsonObject[];
 }
 
+function schemaKeyword(
+    schema: Record<string, unknown>,
+    keyword: "if" | "then" | "else"
+): JsonObject | undefined {
+    const value = schema[keyword];
+    if (value === undefined) {
+        return undefined;
+    }
+    if (!isRecord(value)) {
+        throw new Error(`Invalid JSON Schema: ${keyword} must be a schema`);
+    }
+    return value as JsonObject;
+}
+
 function numericKeyword(
     schema: Record<string, unknown>,
     keyword: string
@@ -158,6 +172,18 @@ function validateNode(
         ).length;
         if (matches === 0) {
             issues.push({ path, message: "must match exactly one oneOf schema" });
+        }
+    }
+
+    const ifSchema = schemaKeyword(schemaRecord, "if");
+    const thenSchema = schemaKeyword(schemaRecord, "then");
+    const elseSchema = schemaKeyword(schemaRecord, "else");
+    if (ifSchema !== undefined) {
+        const conditionMatches =
+            validateNode(ifSchema, value, path, depth + 1).length === 0;
+        const branch = conditionMatches ? thenSchema : elseSchema;
+        if (branch !== undefined) {
+            issues.push(...validateNode(branch, value, path, depth + 1));
         }
     }
 
@@ -260,6 +286,24 @@ function validateNode(
         }
         if (maxItems !== undefined && value.length > maxItems) {
             issues.push({ path, message: `must contain at most ${maxItems} items` });
+        }
+        const uniqueItems = schemaRecord.uniqueItems;
+        if (uniqueItems !== undefined && typeof uniqueItems !== "boolean") {
+            throw new Error("Invalid JSON Schema: uniqueItems must be a boolean");
+        }
+        if (uniqueItems === true) {
+            duplicateSearch:
+            for (let left = 0; left < value.length; left += 1) {
+                for (let right = left + 1; right < value.length; right += 1) {
+                    if (jsonEquals(value[left], value[right])) {
+                        issues.push({
+                            path,
+                            message: `must contain unique items; indexes ${left} and ${right} are equal`
+                        });
+                        break duplicateSearch;
+                    }
+                }
+            }
         }
         if (schemaRecord.items !== undefined) {
             if (!isRecord(schemaRecord.items)) {
@@ -374,7 +418,6 @@ export function validateJsonSchema(
 ): readonly JsonSchemaIssue[] {
     return validateNode(schema, value, "$", 0);
 }
-
 
 
 

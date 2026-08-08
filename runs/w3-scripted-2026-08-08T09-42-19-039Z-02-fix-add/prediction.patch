@@ -1,0 +1,9 @@
+diff --git a/src/calculator.mjs b/src/calculator.mjs
+index 3597119..3693648 100644
+--- a/src/calculator.mjs
++++ b/src/calculator.mjs
+@@ -1,3 +1,3 @@
+ export function add(left, right) {
+-  return left - right;
++  return left + right;
+ }

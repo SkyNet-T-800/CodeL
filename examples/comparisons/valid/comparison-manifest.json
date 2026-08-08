@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "comparisonId": "w3-model-ab",
+  "runAId": "w3-model-ab-a",
+  "runBId": "w3-model-ab-b",
+  "changedVariables": ["model.modelId"],
+  "status": "valid_for_attribution",
+  "reasons": []
+}

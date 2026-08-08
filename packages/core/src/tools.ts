@@ -40,6 +40,7 @@ export function registerTool<TInput>(tool: ExecutableTool<TInput>): RegisteredTo
         definition: tool.definition,
         async invoke(input, context) {
             try {
+                context.signal?.throwIfAborted();
                 const inputIssues = validateJsonSchema(tool.definition.inputSchema, input);
                 if (inputIssues.length > 0) {
                     throw new ToolError(
@@ -50,6 +51,7 @@ export function registerTool<TInput>(tool: ExecutableTool<TInput>): RegisteredTo
                 }
                 const parsedInput = tool.parse(input);
                 const output = await tool.execute(parsedInput, context);
+                context.signal?.throwIfAborted();
                 if (tool.definition.outputSchema !== undefined) {
                     const outputIssues = validateJsonSchema(
                         tool.definition.outputSchema,
@@ -65,6 +67,9 @@ export function registerTool<TInput>(tool: ExecutableTool<TInput>): RegisteredTo
                 }
                 return { ok: true, output };
             } catch (error) {
+                if (context.signal?.aborted === true) {
+                    throw context.signal.reason;
+                }
                 return { ok: false, error: toAgentError(error) };
             }
         }

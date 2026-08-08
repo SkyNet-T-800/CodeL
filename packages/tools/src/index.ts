@@ -1,85 +1,52 @@
-import { readFile } from "node:fs/promises";
 import type { RegisteredTool } from "@repo-circuit/core";
 
-import { isAbsolute, relative, resolve, sep } from "node:path";
-
-import {
-  registerTool,
-  type ExecutableTool,
-  type JsonObject
-} from "@repo-circuit/core";
-
-import { treeToolRegistration } from "./tree.js";
-import { symbolsToolRegistration } from "./symbols.js";
 import { applyPatchToolRegistration } from "./apply-patch.js";
-import { readFileBytes } from "./text-file.js";
+import { diffToolRegistration } from "./diff.js";
+import {
+  createExecToolRegistration,
+  type ExecProfile,
+  type ExecToolOptions
+} from "./exec.js";
+import {
+  readFileToolRegistration,
+  readToolRegistration
+} from "./read.js";
+import { symbolsToolRegistration } from "./symbols.js";
+import { treeToolRegistration } from "./tree.js";
 
+export * from "./apply-patch.js";
+export * from "./diff.js";
+export * from "./exec.js";
+export * from "./hash.js";
+export * from "./limits.js";
+export * from "./path-safety.js";
+export * from "./process-runner.js";
+export * from "./read.js";
 export * from "./symbols.js";
 export * from "./text-file.js";
 export * from "./tree.js";
-export * from "./apply-patch.js";
-export * from "./text-file.js";
-export * from "./hash.js";
-export * from "./read.js";
+export * from "./unified-diff.js";
 
-interface ReadFileInput {
-  readonly path: string;
-}
-
-const readFileTool: ExecutableTool<ReadFileInput> = {
-  definition: {
-    name: "read_file",
-    description: "Read one UTF-8 text file relative to the task workspace.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string", minLength: 1}
-      },
-      required: ["path"],
-      additionalProperties: false
-    }
-  },
-
-  parse(input: JsonObject): ReadFileInput {
-    const keys = Object.keys(input);
-    if (
-      keys.length !== 1 ||
-      keys[0] !== "path" ||
-      typeof input.path !== "string" ||
-      input.path.trim().length === 0
-    ) {
-      throw new Error("read_file.path must be a non-empty string");
-    }
-    return { path: input.path };
-  },
-
-  async execute(input, context) {
-    const workspaceRoot = resolve(context.workspaceRoot);
-    const filePath = resolve(workspaceRoot, input.path);
-    const relativePath = relative(workspaceRoot, filePath);
-    const escapesWorkspace =
-      relativePath === ".." ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath);
-
-    if (escapesWorkspace) {
-      throw new Error(`Path escapes task workspace: ${input.path}`);
-    }
-
-    let content: string;
-    try {
-      content = await readFile(filePath, "utf-8");
-    } catch (error) {
-      throw new Error(`Failed to read file: ${input.path}`);
-    }
-
-    return { path: input.path, content };
-  }
-};
-
-export const readFileToolRegistration = registerTool(readFileTool);
-
+/**
+ * The six static W2 capabilities. `exec` is deliberately constructed by the
+ * Host because command, argv, environment and limits must never come from the
+ * model.
+ */
 export const weekTwoToolRegistrations: readonly RegisteredTool[] = [
   treeToolRegistration,
-  symbolsToolRegistration
-]
+  symbolsToolRegistration,
+  readToolRegistration,
+  readFileToolRegistration,
+  applyPatchToolRegistration,
+  diffToolRegistration
+];
+
+export function createWeekTwoToolRegistrations(
+  execProfiles: readonly ExecProfile[],
+  execOptions: ExecToolOptions = {}
+): readonly RegisteredTool[] {
+  return [
+    ...weekTwoToolRegistrations,
+    createExecToolRegistration(execProfiles, execOptions)
+  ];
+}

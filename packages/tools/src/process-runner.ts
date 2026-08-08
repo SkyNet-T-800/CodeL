@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import { ToolError } from "@repo-circuit/core";
 
@@ -10,6 +10,7 @@ export interface ProcessRunOptions {
    readonly maxOutputBytes: number;
    readonly env?: Readonly<Record<string, string>>;
    readonly label?: string;
+   readonly signal?: AbortSignal;
 }
 
 export interface ProcessRunResult {
@@ -52,6 +53,21 @@ export function createMinimalEnvironment(
     return environment;
 }
 
+function stopProcessTree(
+    child: ChildProcess,
+    signal: NodeJS.Signals
+): void {
+    if (process.platform !== "win32" && child.pid !== undefined) {
+        try {
+            process.kill(-child.pid, signal);
+            return;
+        } catch {
+
+        }
+    }
+    child.kill(signal);
+}
+
 export async function runProcess(
     options: ProcessRunOptions
 ): Promise<ProcessRunResult> {
@@ -66,7 +82,7 @@ export async function runProcess(
             "timeoutMs and maxOutputBytes must be positive integers"
         );
     }
-
+    options.signal?.throwIfAborted();
     const label = options.label ?? "Command";
 
     return await new Promise<ProcessRunResult>((resolve, reject) => {
@@ -81,7 +97,8 @@ export async function runProcess(
             env: createMinimalEnvironment(options.env),
             shell: false,
             stdio: ["ignore", "pipe", "pipe"],
-            windowsHide: true
+            windowsHide: true,
+            detached: process.platform !== "win32"
         });
 
         const failAndStop = (error: ToolError): void => {
@@ -89,8 +106,22 @@ export async function runProcess(
                 return;
             }
             terminalError = error;
-            child.kill("SIGKILL");
+            stopProcessTree(child, "SIGKILL");
         };
+
+        const onAbort = (): void => {
+            failAndStop(
+                new ToolError(
+                    "EXEC_ABORTED", 
+                    `${label} was aborted`,
+                    { reason: String(options.signal?.reason ?? "aborted") })
+            );
+        };
+        if (options.signal?.aborted === true) {
+            onAbort();
+        } else {
+            options.signal?.addEventListener("abort", onAbort, { once: true });
+        }
 
         const collect = (target: Buffer[], chunk: Buffer | string): void => {
             if (terminalError !== undefined) {
@@ -132,6 +163,7 @@ export async function runProcess(
             }
             settled = true;
             clearTimeout(timeout);
+            options.signal?.removeEventListener("abort", onAbort);
             reject(
                 terminalError ??
                   new ToolError("EXEC_FAILED", `${label} could not be started`)
@@ -144,7 +176,10 @@ export async function runProcess(
             }
             settled = true;
             clearTimeout(timeout);
-
+            options.signal?.removeEventListener("abort", onAbort);
+            if (terminalError !== undefined) {
+                reject(terminalError);
+            }
             resolve({
                 exitCode,
                 signal,
@@ -158,4 +193,3 @@ export async function runProcess(
 
     })
 }
-

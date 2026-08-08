@@ -1,0 +1,36 @@
+[
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "01-read", "name": "read", "input": { "path": "src/config.mjs" } }
+    ],
+    "usage": { "inputTokens": 120, "outputTokens": 20, "totalTokens": 140, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      {
+        "id": "01-patch",
+        "name": "apply_patch",
+        "input": {
+          "path": "src/config.mjs",
+          "baseHash": "c17185e4dd62d224a8fe555203d35aaa500aada69e5323e963053fe328c536f3",
+          "patch": "diff --git a/src/config.mjs b/src/config.mjs\n--- a/src/config.mjs\n+++ b/src/config.mjs\n@@ -1,1 +1,1 @@\n-export const courseWeek = 2;\n+export const courseWeek = 3;\n"
+        }
+      }
+    ],
+    "usage": { "inputTokens": 180, "outputTokens": 50, "totalTokens": 230, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "01-test", "name": "exec", "input": { "profile": "test" } }
+    ],
+    "usage": { "inputTokens": 220, "outputTokens": 20, "totalTokens": 240, "complete": true }
+  },
+  {
+    "kind": "end_turn",
+    "text": "Changed courseWeek to 3 and verified the test passes.",
+    "usage": { "inputTokens": 250, "outputTokens": 24, "totalTokens": 274, "complete": true }
+  }
+]

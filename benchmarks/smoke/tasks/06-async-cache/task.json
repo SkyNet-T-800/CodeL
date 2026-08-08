@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "w3-async-cache",
+  "title": "Deduplicate async cache loads",
+  "instruction": "Fix createAsyncCache in src/async-cache.mjs. Concurrent get calls for the same key must share one loader promise. A rejected load must be evicted so a later call can retry. Run tests.",
+  "workspace": { "root": "workspace" },
+  "constraints": {
+    "allowedTools": ["tree", "read", "symbols", "apply_patch", "diff", "exec"]
+  },
+  "budget": {
+    "maxSteps": 4,
+    "tokenBudget": 9000,
+    "maxToolCalls": 4,
+    "wallClockBudgetMs": 60000
+  },
+  "attribution": {
+    "baseSha": "d8ece3dc06efc5502c6bb1f5c4fa333026e459ea",
+    "fixtureVersion": "w3-smoke-v1"
+  }
+}

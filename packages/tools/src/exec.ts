@@ -170,6 +170,7 @@ export function createExecToolRegistration(
           hardMaxOutputBytes
         ),
         ...(profile.env === undefined ? {} : { env: profile.env }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
         label: `Exec profile ${profile.id}`
       });
 

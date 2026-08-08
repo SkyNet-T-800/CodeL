@@ -1,0 +1,30 @@
+[
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "06-repeat", "name": "read", "input": { "path": "src/async-cache.mjs" } }
+    ],
+    "usage": { "inputTokens": 160, "outputTokens": 20, "totalTokens": 180, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "06-repeat", "name": "read", "input": { "path": "src/async-cache.mjs" } }
+    ],
+    "usage": { "inputTokens": 190, "outputTokens": 20, "totalTokens": 210, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "06-repeat", "name": "read", "input": { "path": "src/async-cache.mjs" } }
+    ],
+    "usage": { "inputTokens": 220, "outputTokens": 20, "totalTokens": 240, "complete": true }
+  },
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "06-repeat", "name": "read", "input": { "path": "src/async-cache.mjs" } }
+    ],
+    "usage": { "inputTokens": 250, "outputTokens": 20, "totalTokens": 270, "complete": true }
+  }
+]

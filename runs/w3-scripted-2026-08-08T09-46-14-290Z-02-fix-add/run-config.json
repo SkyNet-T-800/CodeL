@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "runId": "w3-scripted-2026-08-08T09-46-14-290Z-02-fix-add",
+  "comparisonId": null,
+  "attemptIndex": 0,
+  "identity": {
+    "taskId": "w3-fix-add",
+    "baseSha": "5b0509fc49ce9585150f88722890e5fadfbbec96",
+    "fixtureVersion": "unknown",
+    "startedAt": "2026-08-08T09:46:15.051Z",
+    "agentCommit": "ac0db2579a7e409038b8f565aff1eb7ec1a41981+dirty",
+    "harnessCommit": "ac0db2579a7e409038b8f565aff1eb7ec1a41981+dirty"
+  },
+  "model": {
+    "provider": "scripted-mock",
+    "modelId": "scripted-mock",
+    "modelRevision": "unknown",
+    "reasoningEffort": "unsupported",
+    "temperature": "unsupported",
+    "topP": "unsupported",
+    "seed": "unsupported"
+  },
+  "prompt": {
+    "systemPromptHash": "7ba330c06ee5f382bc1d98b54864185e358dc769847980f2b89fccbae74e6954"
+  },
+  "tools": {
+    "toolSchemaHash": "7906f0375a41942c08aec692fbdde6d7f345ff1df9aeef4fa6a30ad1e09969d0",
+    "enabledTools": [
+      "apply_patch",
+      "diff",
+      "exec",
+      "read",
+      "symbols",
+      "tree"
+    ],
+    "toolPolicyHash": "3cb75bf41772fc7d4ece92356448214acf5d8fb69d634ef641107376680053f5"
+  },
+  "context": {
+    "contextStrategy": "full-transcript-v1",
+    "maxContextTokens": "unsupported"
+  },
+  "budget": {
+    "maxSteps": 6,
+    "tokenBudget": 100000,
+    "maxToolCalls": 64,
+    "wallClockBudgetMs": 300000
+  },
+  "evaluation": {
+    "verifierVersion": "w3-command-verifier-v1+sha256:21410fa82128dfb6df7bd34dcc7a5d7078961bdbaa5e5e682f1d17949f7e7d39",
+    "evaluatorCommit": "ac0db2579a7e409038b8f565aff1eb7ec1a41981+dirty",
+    "scorer": "deterministic-command-v1"
+  }
+}

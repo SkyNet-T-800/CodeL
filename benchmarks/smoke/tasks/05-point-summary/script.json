@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "tool_use",
+    "calls": [
+      { "id": "05-illegal", "name": "delete_file", "input": { "path": "src/point.mjs" } }
+    ],
+    "usage": { "inputTokens": 150, "outputTokens": 30, "totalTokens": 180, "complete": true }
+  },
+  {
+    "kind": "end_turn",
+    "text": "The task is complete without changes.",
+    "usage": { "inputTokens": 190, "outputTokens": 16, "totalTokens": 206, "complete": true }
+  }
+]

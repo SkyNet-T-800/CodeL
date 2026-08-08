@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "w3-course-week",
+  "title": "Update the course week",
+  "instruction": "Change src/config.mjs so courseWeek is 3. Inspect the file first, apply the smallest safe patch, run the test profile, and stop only after it passes.",
+  "workspace": { "root": "workspace" },
+  "constraints": {
+    "allowedTools": ["tree", "read", "symbols", "apply_patch", "diff", "exec"]
+  },
+  "budget": {
+    "maxSteps": 6,
+    "tokenBudget": 12000,
+    "maxToolCalls": 10,
+    "wallClockBudgetMs": 120000
+  },
+  "attribution": {
+    "baseSha": "4f1422fbf77302d905ad0a2d5c07a0feb6f4d758",
+    "fixtureVersion": "w3-smoke-v1"
+  }
+}

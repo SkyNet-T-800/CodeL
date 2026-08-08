@@ -29,6 +29,9 @@ importers:
       '@repo-circuit/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@repo-circuit/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@repo-circuit/providers':
         specifier: workspace:*
         version: link:../../packages/providers
@@ -40,6 +43,12 @@ importers:
         version: link:../../packages/trace
 
   packages/core: {}
+
+  packages/harness:
+    dependencies:
+      '@repo-circuit/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/providers:
     dependencies:

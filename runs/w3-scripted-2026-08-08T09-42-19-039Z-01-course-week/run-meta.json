@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "runId": "w3-scripted-2026-08-08T09-42-19-039Z-01-course-week",
+  "comparisonId": null,
+  "attemptIndex": 0,
+  "identity": {
+    "taskId": "w3-course-week",
+    "baseSha": "4f1422fbf77302d905ad0a2d5c07a0feb6f4d758",
+    "fixtureVersion": "unknown",
+    "startedAt": "2026-08-08T09:42:19.382Z",
+    "agentCommit": "ac0db2579a7e409038b8f565aff1eb7ec1a41981+dirty",
+    "harnessCommit": "ac0db2579a7e409038b8f565aff1eb7ec1a41981+dirty"
+  },
+  "model": {
+    "provider": "scripted-mock",
+    "modelId": "scripted-mock",
+    "modelRevision": "unknown",
+    "reasoningEffort": "unsupported",
+    "temperature": "unsupported",
+    "topP": "unsupported",
+    "seed": "unsupported"
+  },
+  "prompt": {
+    "systemPromptHash": "7ba330c06ee5f382bc1d98b54864185e358dc769847980f2b89fccbae74e6954"
+  },
+  "tools": {
+    "toolSchemaHash": "7906f0375a41942c08aec692fbdde6d7f345ff1df9aeef4fa6a30ad1e09969d0",
+    "enabledTools": [
+      "apply_patch",
+      "diff",
+      "exec",
+      "read",
+      "symbols",
+      "tree"
+    ],
+    "toolPolicyHash": "3cb75bf41772fc7d4ece92356448214acf5d8fb69d634ef641107376680053f5"
+  },
+  "context": {
+    "contextStrategy": "full-transcript-v1",
+    "maxContextTokens": "unsupported"
+  },
+  "budget": {
+    "maxSteps": 6,
+    "tokenBudget": 100000,
+    "maxToolCalls": 64,
+    "wallClockBudgetMs": 300000
+  },
+  "evaluation": {
+    "verifierVersion": "w3-command-verifier-v1+sha256:6aaa31bb6820fbbd8a45ba16d19624327a65bf73618f47370ed0a9309db3e782",
+    "evaluatorCommit": "ac0db2579a7e409038b8f565aff1eb7ec1a41981+dirty",
+    "scorer": "deterministic-command-v1"
+  },
+  "outcome": {
+    "endedAt": "2026-08-08T09:42:19.669Z",
+    "usage": {
+      "inputTokens": 770,
+      "outputTokens": 114,
+      "totalTokens": 884,
+      "complete": true
+    },
+    "steps": 4,
+    "toolCallCount": 3,
+    "latencyMs": 240,
+    "terminalReason": "verified",
+    "patchHash": "edb391271156da019374342c988ad43d98b0fe6c58ea0a1b0967306863f506c5",
+    "testResult": {
+      "status": "passed",
+      "exitCode": 0,
+      "summary": "courseWeek is 3",
+      "durationMs": 81
+    }
+  },
+  "artifacts": {
+    "tracePath": "trace.jsonl",
+    "traceSha256": "d557b34e0bcd283e731f8fa6da42cbf0eb0433e14bf49efe161689e1e58dd655",
+    "patchPath": "prediction.patch",
+    "patchSha256": "edb391271156da019374342c988ad43d98b0fe6c58ea0a1b0967306863f506c5",
+    "verifierResultPath": "verifier-result.json",
+    "verifierResultSha256": "2b6cc7fc6dffee42c031498160f96e232d1ce338c9e754f6a7831019eaffe38c"
+  }
+}

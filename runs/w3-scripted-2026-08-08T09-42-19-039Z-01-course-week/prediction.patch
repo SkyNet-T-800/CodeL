@@ -1,0 +1,7 @@
+diff --git a/src/config.mjs b/src/config.mjs
+index fe25475..16668a7 100644
+--- a/src/config.mjs
++++ b/src/config.mjs
+@@ -1 +1 @@
+-export const courseWeek = 2;
++export const courseWeek = 3;

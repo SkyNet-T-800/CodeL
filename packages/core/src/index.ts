@@ -1,4 +1,5 @@
 export * from "./contracts.js";
+export * from "./json-schema.js";
 export * from "./runtime.js";
 export * from "./task-spec.js";
 export * from "./tool-error.js";

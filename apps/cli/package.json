@@ -9,6 +9,7 @@
   "files": ["bin", "dist"],
   "dependencies": {
     "@repo-circuit/core": "workspace:*",
+    "@repo-circuit/harness": "workspace:*",
     "@repo-circuit/providers": "workspace:*",
     "@repo-circuit/tools": "workspace:*",
     "@repo-circuit/trace": "workspace:*"

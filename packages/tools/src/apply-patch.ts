@@ -95,8 +95,10 @@ async function writeAtomic(
     targetPath: string,
     content: Uint8Array,
     mode: number,
-    expectedCurrentHash: string
+    expectedCurrentHash: string,
+    signal?: AbortSignal
 ): Promise<void> {
+    signal?.throwIfAborted();
     const temporaryPath = join(
         dirname(targetPath),
         `.${basename(targetPath)}.repo-circuit-${randomBytes(12).toString("hex")}.tmp`
@@ -107,8 +109,11 @@ async function writeAtomic(
         temporaryCreated = true;
         try {
             await handle.writeFile(content);
+            signal?.throwIfAborted();
             await handle.chmod(mode & 0o777);
+            signal?.throwIfAborted();
             await handle.sync();
+            signal?.throwIfAborted();
         } finally {
             await handle.close();
         }
@@ -116,6 +121,7 @@ async function writeAtomic(
         const currentHash = await sha256File(targetPath, {
             maxBytes: DEFAULT_TOOL_LIMITS.maxFileBytes
         });
+        signal?.throwIfAborted();
         if (currentHash !== expectedCurrentHash) {
             throw new ToolError(
                 "HASH_MISMATCH",
@@ -180,14 +186,18 @@ const applyPatchTool: ExecutableTool<ApplyPatchInput> = {
     parse: parseInput,
 
     async execute(input, context) {
+        context.signal?.throwIfAborted();
         const targetPath = await resolveRepoPath(
             context.workspaceRoot, 
             input.path,
             { mode: "existing"}
         );
+        context.signal?.throwIfAborted();
         await assertFinalEntryIsNotSymlink(context.workspaceRoot, targetPath);
+        context.signal?.throwIfAborted();
 
         const stats = await lstat(targetPath);
+        context.signal?.throwIfAborted();
         if (!stats.isFile()) {
             throw new ToolError("NOT_A_FILE", "Patch target is not a regular file");
         }
@@ -195,6 +205,7 @@ const applyPatchTool: ExecutableTool<ApplyPatchInput> = {
         const beforeBytes = await readFileBytes(targetPath, {
             maxBytes: DEFAULT_TOOL_LIMITS.maxFileBytes
         });
+        context.signal?.throwIfAborted();
         const beforeHash = sha256Hex(beforeBytes);
         if (beforeHash !== input.baseHash) {
             throw new ToolError(
@@ -215,6 +226,7 @@ const applyPatchTool: ExecutableTool<ApplyPatchInput> = {
         });
 
         const updated = applyParsedUnifiedDiff(source, parsed);
+        context.signal?.throwIfAborted();
         const afterBytes = Buffer.from(updated, "utf8")
         if (afterBytes.byteLength > DEFAULT_TOOL_LIMITS.maxFileBytes) {
             throw new ToolError(
@@ -226,7 +238,7 @@ const applyPatchTool: ExecutableTool<ApplyPatchInput> = {
         decodeUtf8Text(afterBytes);
         const afterHash = sha256Hex(afterBytes);
 
-        await writeAtomic(targetPath, afterBytes, stats.mode, beforeHash);
+        await writeAtomic(targetPath, afterBytes, stats.mode, beforeHash, context.signal);
 
         return {
             path: input.path,

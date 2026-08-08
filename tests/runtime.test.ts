@@ -1,20 +1,15 @@
-import { fileURLToPath } from "node:url";
-
 import {
-    parseTaskSpec,
+    registerTool,
     runAgent,
     type AgentEvent,
     type EventSink,
-    type RegisteredTool,
-    type TaskSpec
+    type ModelAdapter,
+    type ModelResponse,
+    type ProviderRequest,
+    type TaskSpec,
+    type VerificationResult,
+    type Verifier
 } from "@repo-circuit/core";
-
-import {
-    createWeekOneMockProvider,
-    ScriptedMockProvider
-} from "@repo-circuit/providers";
-
-import { readFileToolRegistration } from "@repo-circuit/tools";
 import { describe, expect, it } from "vitest";
 
 class MemoryEventSink implements EventSink {
@@ -25,86 +20,479 @@ class MemoryEventSink implements EventSink {
     }
 }
 
-const fixtureRoot = fileURLToPath(
-    new URL("../fixtures/hello-repo", import.meta.url)
-)
+class QueueProvider implements ModelAdapter {
+    readonly name = "w3-queue";
+    readonly #responses: ModelResponse[];
 
-const task: TaskSpec = {
-    schemaVersion: 1,
-    id: "fixture-readme",
-    title: "Read the fixture README",
-    instruction: "Read README.md and report the fixture project name.",
-    workspace: { root: "." },
-    constraints: {
-        allowedTools: ["read_file"]
-    },
-    budget: { maxSteps: 4}
+    constructor(responses: readonly ModelResponse[]) {
+        this.#responses = [...responses];
+    }
+
+    async complete(
+        _request: ProviderRequest,
+        signal?: AbortSignal): Promise<ModelResponse> {
+            signal?.throwIfAborted();
+            const response = this.#responses.shift();
+            if (response === undefined) {
+                throw new Error("response queue exhausted");
+            }
+            return response;
+        }
 }
 
-async function executeFixture() {
-    const provider = createWeekOneMockProvider();
-    const sink = new MemoryEventSink();
-    const state = await runAgent({
-        runId: "fixture-readme-run",
-        task,
-        workspaceRoot: fixtureRoot,
-        provider,
-        tools: [readFileToolRegistration],
-        events: sink
+const passedVerification: VerificationResult = {
+    passed: true,
+    summary: "deterministic checks passed",
+    testResult: {
+        status: "passed",
+        exitCode: 0,
+        summary: "ok",
+        durationMs: 0
+    }
+};
+
+class FixedVerifier implements Verifier {
+    readonly version = "test-verifier-v1";
+    readonly #results: VerificationResult[];
+
+    constructor(results: readonly VerificationResult[] = [passedVerification]) {
+        this.#results = [...results];
+    }
+
+    async verify(): Promise<VerificationResult> {
+        const result = this.#results.shift();
+        if (result === undefined) {
+            throw new Error("verification queue exhausted");
+        }
+        return result;
+    }
+}
+
+function task(overrrides: Partial<TaskSpec["budget"]> = {}): TaskSpec {
+    return {
+        schemaVersion: 1,
+        id: "w3-runtime",
+        title: "W3 runtime",
+        instruction: "Use the echo tool, then finish.",
+        workspace: { root: "." },
+        constraints: { allowedTools: ["echo"] },
+        budget: {
+            maxSteps: 4,
+            tokenBudget: 1_000,
+            maxToolCalls: 4,
+            wallClockBudgetMs: 2_000,
+            ...overrrides
+        }
+    };
+}
+
+function usage(inputTokens = 10, outputTokens = 5) {
+    return {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        complete: true
+    }
+}
+
+function echoTool(counter: { value: number }) {
+    return registerTool({
+        definition: {
+            name: "echo",
+            description: "Echo a string",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    text: {
+                        type: "string"
+                    }
+                },
+                required: ["text"],
+                additionalProperties: false
+            }
+        },
+        parse(input) {
+            return { text: String(input.text) };
+        },
+        async execute(input) {
+            counter.value += 1;
+            return { text: input.text };
+        }
     });
-    return { provider, sink, state };
 }
 
-describe("runAgent", () => {
-    it("completes the Provider -> Tool -> Provider loop", async () => {
-        const { provider, sink, state } = await executeFixture();
+async function execute(
+    provider: ModelAdapter,
+    options: {
+        readonly task?: TaskSpec;
+        readonly verifier?: Verifier;
+        readonly signal?: AbortSignal;
+        readonly counter?: { value: number };
+    } = {}
+) {
+    const sink = new MemoryEventSink();
+    const counter = options.counter ?? { value: 0 };
+    const state = await runAgent({
+        runId: "w3-runtime-run",
+        task: options.task ?? task(),
+        workspaceRoot: process.cwd(),
+        provider,
+        tools: [echoTool(counter)],
+        events: sink,
+        verifier: options.verifier ?? new FixedVerifier(),
+        ...(options.signal === undefined ? {} : { signal: options.signal })
+    });
+    return { counter, sink, state };
+}
+
+describe("W3 agent loop", () => {
+    it("records Usage before Tool, observes the result, then verifies", async () => {
+        const provider = new QueueProvider([
+            {
+                kind: "tool_use",
+                calls: [{ id: "call-1", name: "echo", input: { text: "hello" } }],
+                usage: usage()
+            },
+            {
+                kind: "end_turn",
+                text: "done",
+                usage: usage(12, 3)
+            }
+        ]);
+
+        const { counter, sink, state } = await execute(provider);
 
         expect(state.status).toBe("completed");
-        if (state.status !== "completed") {
-            throw new Error("Agent did not complete successfully");
-        }
-        expect(state.step).toBe(2);
-        expect(state.finalOutput).toBe("Fixture README read successfully: RepoCircuit Fixture.");
-            expect(provider.requests).toHaveLength(2);
-        expect(provider.requests[0]?.messages.some((message) => message.role === "tool")).toBe(
-        false
+        expect(state.terminalReason).toBe("verified");
+        expect(counter.value).toBe(1);
+        const types = sink.events.map((event) => event.type);
+        expect(types.indexOf("usage.recorded")).toBeLessThan(
+            types.indexOf("tool.call")
         );
-        expect(provider.requests[1]?.messages.some((message) => message.role === "tool")).toBe(
-        true
-        );
-        expect(JSON.stringify(provider.requests[1]?.messages)).toContain(
-        "# RepoCircuit Fixture"
-        );
-        expect(sink.events.map((event) => event.type)).toEqual([
-        "run.begin",
-        "step.begin",
-        "tool.call",
-        "tool.result",
-        "step.end",
-        "step.begin",
-        "assistant.final",
-        "step.end",
-        "run.end"
-        ]);
-        expect(sink.events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        expect(
-        sink.events
-            .filter((event) => event.type === "step.end")
-            .map((event) => event.data.reason)
-        ).toEqual(["tool_use", "end_turn"]);
-        expect(
-        sink.events.filter(
-            (event) => event.type === "run.end" || event.type === "run.error"
-        )
-        ).toHaveLength(1);
+        expect(types).toContain("verify.result");
+        expect(types.at(-1)).toBe("run.end");
     });
 
-    it("produces byte-identical deterministic events for identical input", async () => {
-        const first = await executeFixture();
-        const second = await executeFixture();
+    it("returns a typed observation for a forbidden tool call", async () => {
+        const provider = new QueueProvider([
+            {
+                kind: "tool_use",
+                calls: [
+                    { id: "bad-call", name: "delete_everything", input: {} }
+                ],
+                usage: usage()
+            },
+            { kind: "end_turn", text: "recovered", usage: usage() }
+        ]);
 
-        expect(JSON.stringify(first.sink.events)).toEqual(JSON.stringify(second.sink.events));
-    })
+        const { sink, state } = await execute(provider);
+        const result = sink.events.find(
+            (event) => event.type === "tool.result"
+        );
+
+        expect(state.status).toBe("completed");
+        expect(result?.type).toBe("tool.result");
+        if (result?.type === "tool.result") {
+            expect(result.data.result).toMatchObject({
+                ok: false,
+                error: { code: "TOOL_NOT_ALLOWED" }
+            });
+        }
+    });
+
+    it("never executes the same tool call id twice", async () => {
+        const repeated = {
+            kind: "tool_use" as const,
+            calls: [{ id: "same-id", name: "echo", input:{ text: "once"}}],
+            usage: usage()
+        };
+        const counter = { value: 0 };
+        const { sink, state } = await execute(
+            new QueueProvider([
+                repeated,
+                repeated,
+                { kind: "end_turn", text: "done", usage: usage() }
+            ]),
+            { counter }
+        );
+
+        expect(state.status).toBe("completed");
+        expect(counter.value).toBe(1);
+        expect(
+            sink.events
+            .filter((event) => event.type === "tool.result")
+            .at(-1)
+        ).toMatchObject({
+            data: {
+                result: {
+                    ok: false,
+                    error: { code: "DUPLICATE_TOOL_CALL_ID" }
+                }
+            }
+        })
+    });
+
+      it("stops an otherwise infinite loop at the step budget", async () => {
+        const responses = Array.from({ length: 2 }, (_, index) => ({
+        kind: "tool_use" as const,
+        calls: [
+            {
+            id: `step-${index}`,
+            name: "echo",
+            input: { text: "again" }
+            }
+        ],
+        usage: usage()
+        }));
+
+        const { state } = await execute(new QueueProvider(responses), {
+        task: task({ maxSteps: 2 })
+        });
+
+        expect(state).toMatchObject({
+            status: "failed",
+            error: { code: "STEP_BUDGET_EXHAUSTED" }
+        });
+    });
+
+      it("records the current Tool result but starts no new Step at token budget", async () => {
+    const { sink, state } = await execute(
+      new QueueProvider([
+        {
+          kind: "tool_use",
+          calls: [{ id: "token-call", name: "echo", input: { text: "x" } }],
+          usage: usage(7, 3)
+        }
+      ]),
+      { task: task({ tokenBudget: 10 }) }
+    );
+
+    expect(state).toMatchObject({
+      status: "failed",
+      error: { code: "TOKEN_BUDGET_EXHAUSTED" }
+    });
+    expect(
+      sink.events.filter((event) => event.type === "step.begin")
+    ).toHaveLength(1);
+  });
+
+  it("stops before executing a Tool beyond maxToolCalls", async () => {
+    const counter = { value: 0 };
+    const { state } = await execute(
+      new QueueProvider([
+        {
+          kind: "tool_use",
+          calls: [
+            { id: "allowed", name: "echo", input: { text: "first" } },
+            { id: "blocked", name: "echo", input: { text: "second" } }
+          ],
+          usage: usage()
+        }
+      ]),
+      {
+        counter,
+        task: task({ maxToolCalls: 1 })
+      }
+    );
+
+    expect(counter.value).toBe(1);
+    expect(state).toMatchObject({
+      status: "failed",
+      error: { code: "TOOL_CALL_BUDGET_EXHAUSTED" }
+    });
+  });
+
+  it("interrupts an in-flight Provider at the wall-clock budget", async () => {
+    const provider: ModelAdapter = {
+      name: "wall-clock-blocking",
+      async complete(_request, signal) {
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true
+          });
+        });
+        throw new Error("unreachable");
+      }
+    };
+
+    const { sink, state } = await execute(provider, {
+      task: task({ wallClockBudgetMs: 25 })
+    });
+
+    expect(state).toMatchObject({
+      status: "interrupted",
+      error: { code: "WALL_CLOCK_BUDGET_EXHAUSTED" }
+    });
+    expect(
+      sink.events.filter((event) => event.type === "turn.interrupted")
+    ).toHaveLength(1);
+  });
+
+  it("feeds deterministic verifier failure back into the next Step", async () => {
+    const failed: VerificationResult = {
+      passed: false,
+      summary: "expected value 3",
+      testResult: {
+        status: "failed",
+        exitCode: 1,
+        summary: "assertion failed",
+        durationMs: 0
+      }
+    };
+    const { sink, state } = await execute(
+      new QueueProvider([
+        { kind: "end_turn", text: "first answer", usage: usage() },
+        { kind: "end_turn", text: "corrected answer", usage: usage() }
+      ]),
+      { verifier: new FixedVerifier([failed, passedVerification]) }
+    );
+
+    expect(state.status).toBe("completed");
+    expect(
+      sink.events.filter((event) => event.type === "verify.result")
+    ).toHaveLength(2);
+    expect(
+      sink.events
+        .filter((event) => event.type === "step.end")
+        .map((event) => event.data.reason)
+    ).toEqual(["verification_failed", "end_turn"]);
+  });
+
+  it("commits exactly one interrupted terminal and no synthetic step.end", async () => {
+    const controller = new AbortController();
+    const provider: ModelAdapter = {
+      name: "blocking",
+      async complete(_request, signal) {
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true
+          });
+        });
+        throw new Error("unreachable");
+      }
+    };
+    setTimeout(() => controller.abort(new Error("user cancelled")), 20);
+
+    const { sink, state } = await execute(provider, {
+      signal: controller.signal
+    });
+
+    expect(state.status).toBe("interrupted");
+    expect(
+      sink.events.filter((event) => event.type === "turn.interrupted")
+    ).toHaveLength(1);
+    expect(
+      sink.events.filter((event) => event.type === "step.end")
+    ).toHaveLength(0);
+    expect(state.usage.complete).toBe(false);
+  });
+
+  it("does not append run.begin when the Run is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled before start"));
+
+    const { sink, state } = await execute(
+      new QueueProvider([
+        { kind: "end_turn", text: "unreachable", usage: usage() }
+      ]),
+      { signal: controller.signal }
+    );
+
+    expect(state.status).toBe("interrupted");
+    expect(sink.events.map((event) => event.type)).toEqual([
+      "turn.interrupted"
+    ]);
+    expect(sink.events.map((event) => event.seq)).toEqual([1]);
+  });
+
+  it("marks Usage incomplete when a Provider attempt fails before accounting", async () => {
+    const provider: ModelAdapter = {
+      name: "failed-before-usage",
+      async complete() {
+        throw new Error("connection dropped");
+      }
+    };
+
+    const { state } = await execute(provider);
+
+    expect(state).toMatchObject({
+      status: "failed",
+      usage: { complete: false },
+      error: { code: "PROVIDER_FAILED" }
+    });
+  });
+
+  it("waits for an in-flight Tool to settle before committing interruption", async () => {
+    let announceStarted!: () => void;
+    let releaseTool!: () => void;
+    const started = new Promise<void>((resolve) => {
+      announceStarted = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    const counter = { value: 0 };
+    const slowTool = registerTool({
+      definition: {
+        name: "slow_side_effect",
+        description: "Complete one delayed side effect",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false
+        }
+      },
+      parse() {
+        return {};
+      },
+      async execute() {
+        announceStarted();
+        await released;
+        counter.value += 1;
+        return { value: counter.value };
+      }
+    });
+    const sink = new MemoryEventSink();
+    const controller = new AbortController();
+    const run = runAgent({
+      runId: "settled-tool-abort",
+      task: {
+        ...task({ wallClockBudgetMs: 2_000 }),
+        constraints: { allowedTools: ["slow_side_effect"] }
+      },
+      workspaceRoot: process.cwd(),
+      provider: new QueueProvider([
+        {
+          kind: "tool_use",
+          calls: [{ id: "slow-1", name: "slow_side_effect", input: {} }],
+          usage: usage()
+        }
+      ]),
+      tools: [slowTool],
+      events: sink,
+      verifier: new FixedVerifier(),
+      signal: controller.signal
+    });
+    let runSettled = false;
+    void run.finally(() => {
+      runSettled = true;
+    });
+
+    await started;
+    controller.abort(new Error("stop after Tool start"));
+    await Promise.resolve();
+    expect(runSettled).toBe(false);
+    expect(counter.value).toBe(0);
+
+    releaseTool();
+    const state = await run;
+
+    expect(counter.value).toBe(1);
+    expect(state).toMatchObject({
+      status: "interrupted",
+      error: { code: "RUN_ABORTED" }
+    });
+    expect(sink.events.at(-1)?.type).toBe("turn.interrupted");
+  });
 
 })
 

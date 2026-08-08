@@ -1,0 +1,10 @@
+{
+  "passed": false,
+  "summary": "Verifier was not run",
+  "testResult": {
+    "status": "not_run",
+    "exitCode": null,
+    "summary": "Verifier was not run",
+    "durationMs": 0
+  }
+}

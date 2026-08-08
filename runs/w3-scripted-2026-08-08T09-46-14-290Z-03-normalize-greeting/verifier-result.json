@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "summary": "greet normalizes names",
+  "testResult": {
+    "status": "passed",
+    "exitCode": 0,
+    "summary": "greet normalizes names",
+    "durationMs": 46
+  }
+}

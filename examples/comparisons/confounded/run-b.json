@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "runId": "w3-confounded-b",
+  "comparisonId": "w3-confounded-model-and-prompt",
+  "attemptIndex": 0,
+  "identity": {
+    "taskId": "smoke-fix-greeting",
+    "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fixtureVersion": "smoke-v0.1",
+    "startedAt": "2026-07-30T02:05:00.000Z",
+    "agentCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "harnessCommit": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "model": {
+    "provider": "example-provider",
+    "modelId": "model-beta",
+    "modelRevision": "2026-07-01",
+    "reasoningEffort": "medium",
+    "temperature": "unsupported",
+    "topP": "unsupported",
+    "seed": "unsupported"
+  },
+  "prompt": {
+    "systemPromptHash": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "tools": {
+    "toolSchemaHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "enabledTools": ["read_file", "apply_patch", "exec"],
+    "toolPolicyHash": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "context": {
+    "contextStrategy": "full-transcript-v1",
+    "maxContextTokens": 32000
+  },
+  "budget": {
+    "maxSteps": 12,
+    "tokenBudget": 40000,
+    "maxToolCalls": 32,
+    "wallClockBudgetMs": 300000
+  },
+  "evaluation": {
+    "verifierVersion": "smoke-verifier-v1",
+    "evaluatorCommit": "dddddddddddddddddddddddddddddddddddddddd",
+    "scorer": "all-tests-pass-v1"
+  },
+  "outcome": {
+    "endedAt": "2026-07-30T02:05:06.000Z",
+    "usage": {
+      "inputTokens": 900,
+      "outputTokens": 260,
+      "totalTokens": 1160,
+      "complete": true
+    },
+    "steps": 3,
+    "toolCallCount": 4,
+    "latencyMs": 6000,
+    "terminalReason": "verified",
+    "patchHash": "4444444444444444444444444444444444444444444444444444444444444444",
+    "testResult": {
+      "status": "passed",
+      "exitCode": 0,
+      "summary": "2 tests passed",
+      "durationMs": 210
+    }
+  },
+  "artifacts": {
+    "tracePath": "runs/w3-confounded-b/trace.jsonl",
+    "traceSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "patchPath": "runs/w3-confounded-b/patch.diff",
+    "patchSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "verifierResultPath": "runs/w3-confounded-b/verifier-result.json",
+    "verifierResultSha256": "8888888888888888888888888888888888888888888888888888888888888888"
+  }
+}
