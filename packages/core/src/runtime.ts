@@ -413,7 +413,13 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                     ...state,
                     messages: [
                         ...state.messages,
-                        { role: "assistant", content: response.text }
+                        {
+                            role: "assistant",
+                            content: response.text,
+                            ...(response.reasoningContent === undefined
+                                ? {}
+                                : { reasoningContent: response.reasoningContent })
+                        }
                     ]
                 };
                 await appendEvent(
@@ -555,8 +561,11 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                     ...state.messages,
                     {
                         role: "assistant",
-                        content: "",
-                        toolCalls: response.calls
+                        content: response.text ?? "",
+                        toolCalls: response.calls,
+                        ...(response.reasoningContent === undefined
+                            ? {}
+                            : { reasoningContent: response.reasoningContent })
                     }
                 ]
             };

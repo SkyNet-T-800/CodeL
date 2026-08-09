@@ -13,6 +13,7 @@ export interface UnifiedDiffHunk {
     readonly oldCount: number;
     readonly newStart: number;
     readonly newCount: number;
+    readonly inferredStart: boolean;
     readonly lines: readonly UnifiedDiffLine[];
 }
 
@@ -33,8 +34,12 @@ const DEFAULT_LIMITS: UnifiedDiffLimits = {
     maxPatchLines: 1000,
 }
 
-const HUNK_HEADER = 
-    /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+)) ? @@(?: .*)?$/;
+const HUNK_HEADER =
+    /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/;
+
+function isHunkHeader(line: string | undefined): boolean {
+    return line === "@@" || line?.startsWith("@@ ") === true;
+}
 
 function patchError(message: string): never {
     throw new ToolError("PATCH_INVALID", message);
@@ -74,18 +79,21 @@ function parseHunk(
     if (header === undefined) {
         patchError("Missing hunk header");
     }
-    const match = HUNK_HEADER.exec(header);
-    if (match === null) {
+    const inferredStart = header === "@@";
+    const match = inferredStart ? null : HUNK_HEADER.exec(header);
+    if (!inferredStart && match === null) {
         patchError(`Invalid hunk header: ${header}`);
     }
 
-    const oldStart = decimal(match[1] ?? "", "old start");
-    const oldCount = decimal(match[2] ?? "1", "old count");
-    const newStart = decimal(match[3] ?? "", "new start");
-    const newCount = decimal(match[4] ?? "1", "new count");
-
-    if ((oldCount > 0 && oldStart === 0) || (newCount > 0 && newStart === 0)) {
-        patchError("A non-empty hunk range must start at line 1 or later");
+    const oldStart = inferredStart
+        ? 0
+        : decimal(match?.[1] ?? "", "old start");
+    const newStart = inferredStart
+        ? 0
+        : decimal(match?.[3] ?? "", "new start");
+    if (!inferredStart) {
+        decimal(match?.[2] ?? "1", "old count");
+        decimal(match?.[4] ?? "1", "new count");
     }
 
     const hunkLines: Array<{
@@ -100,7 +108,7 @@ function parseHunk(
 
     for(; index < lines.length; index += 1) {
         const line = lines[index];
-        if (line === undefined || line.startsWith("@@ ")) {
+        if (line === undefined || isHunkHeader(line)) {
             break;
         }
         if (line.startsWith("diff --git ")) {
@@ -149,18 +157,18 @@ function parseHunk(
     if (hunkLines.length === 0) {
         patchError("A hunk must contain at least one line");
     }
-    if (oldLines !== oldCount || newLines !== newCount) {
-        patchError(
-            `Hunk line counts do not match its header (old ${oldLines}/${oldCount}, new ${newLines}/${newCount})`
-        );
+    if ((oldLines > 0 && oldStart === 0 && !inferredStart) ||
+        (newLines > 0 && newStart === 0 && !inferredStart)) {
+        patchError("A non-empty hunk range must start at line 1 or later");
     }
 
     return {
         hunk: {
             oldStart,
-            oldCount,
+            oldCount: oldLines,
             newStart,
-            newCount,
+            newCount: newLines,
+            inferredStart,
             lines: hunkLines
         },
         nextIndex: index
@@ -183,7 +191,7 @@ export function parseSingleFileUnifiedDiff(
 
     const lines = patch.split("\n");
     if (lines.length > limits.maxPatchLines) {
-        throw new ToolError("PATCH_TOO_TARGE", "Patch has too many lines", {
+        throw new ToolError("PATCH_TOO_LARGE", "Patch has too many lines", {
             maxPatchLines: limits.maxPatchLines
         })
     }
@@ -193,26 +201,47 @@ export function parseSingleFileUnifiedDiff(
     const newHeaderPath = `b/${normalizedPath}`;
 
     const expectedDiffHeader = `diff --git ${oldHeaderPath} ${newHeaderPath}`;
-    if (lines[0] !== expectedDiffHeader) {
-        patchError("diff --git header does not match apply_patch.path");
-    }
+    let index = 0;
 
-    let index = 1;
-    if (lines[index]?.startsWith("index")) {
-        if (!/^index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?$/.test(lines[index] ?? "")) {
-            patchError("Invalid index header");
+    if (lines[0]?.startsWith("diff --git ")) {
+        if (lines[0] !== expectedDiffHeader) {
+            patchError("diff --git header does not match apply_patch.path");
+        }
+        index = 1;
+        if (lines[index]?.startsWith("index")) {
+            if (!/^index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?$/.test(lines[index] ?? "")) {
+                patchError("Invalid index header");
+            }
+            index += 1;
+        }
+
+        if (lines[index] !== `--- ${oldHeaderPath}`) {
+            patchError("--- header does not match apply_patch.path");
         }
         index += 1;
+        if (lines[index] !== `+++ ${newHeaderPath}`) {
+            patchError("+++ header does not match apply_patch.path");
+        }
+        index += 1;
+    } else if (lines[0]?.startsWith("--- ")) {
+        if (
+            lines[0] !== `--- ${oldHeaderPath}` &&
+            lines[0] !== `--- ${normalizedPath}`
+        ) {
+            patchError("--- header does not match apply_patch.path");
+        }
+        if (
+            lines[1] !== `+++ ${newHeaderPath}` &&
+            lines[1] !== `+++ ${normalizedPath}`
+        ) {
+            patchError("+++ header does not match apply_patch.path");
+        }
+        index = 2;
+    } else if (!isHunkHeader(lines[0])) {
+        patchError(
+            "Patch must start with a diff --git header, ---/+++ headers, or an @@ hunk header"
+        );
     }
-
-    if (lines[index] !== `--- ${oldHeaderPath}`) {
-        patchError("--- header does not match apply_patch.path");
-    }
-    index += 1;
-    if (lines[index] !== `+++ ${newHeaderPath}`) {
-        patchError("+++ header does not match apply_patch.path");
-    }
-    index += 1;
     
     const hunks: UnifiedDiffHunk[] = [];
     while (index < lines.length) {
@@ -220,7 +249,7 @@ export function parseSingleFileUnifiedDiff(
             index += 1;
             break;
         }
-        if (!lines[index]?.startsWith("@@ ")) {
+        if (!isHunkHeader(lines[index])) {
             patchError(`Unexpected patch metadata: ${lines[index] ?? ""}`);
         }
         if (hunks.length >= limits.maxHunks) {
@@ -265,6 +294,43 @@ function mismatch(kind: "context" | "delete", lineNumber: number): never {
     )
 }
 
+function inferHunkIndex(
+    originalLines: readonly string[],
+    hunk: UnifiedDiffHunk,
+    minimumIndex: number
+): number {
+    const expected = hunk.lines
+        .filter((line) => line.kind !== "add")
+        .map((line) => line.text);
+    if (expected.length === 0) {
+        throw new ToolError(
+            "PATCH_APPLY_FAILED",
+            "A bare @@ insertion needs numbered ranges because it has no source context"
+        );
+    }
+
+    const matches: number[] = [];
+    const lastStart = originalLines.length - expected.length;
+    for (let start = minimumIndex; start <= lastStart; start += 1) {
+        if (expected.every((line, offset) => originalLines[start + offset] === line)) {
+            matches.push(start);
+        }
+    }
+    if (matches.length === 0) {
+        throw new ToolError(
+            "PATCH_CONTEXT_MISMATCH",
+            "Bare @@ hunk source lines do not match the file"
+        );
+    }
+    if (matches.length > 1) {
+        throw new ToolError(
+            "PATCH_APPLY_FAILED",
+            "Bare @@ hunk source lines are ambiguous; use numbered ranges or more context"
+        );
+    }
+    return matches[0] as number;
+}
+
 export function applyParsedUnifiedDiff(
     source: string,
     parsed: ParsedUnifiedDiff
@@ -275,15 +341,20 @@ export function applyParsedUnifiedDiff(
     let oldCursor = 0;
 
     for (const hunk of parsed.hunks) {
-        const oldIndex = hunkIndex(hunk.oldStart, hunk.oldCount);
-        const newIndex = hunkIndex(hunk.newStart, hunk.newCount);
+        const oldIndex = hunk.inferredStart
+            ? inferHunkIndex(original.lines, hunk, oldCursor)
+            : hunkIndex(hunk.oldStart, hunk.oldCount);
         if (oldIndex < oldCursor || oldIndex > original.lines.length) {
             throw new ToolError(
                 "PATCH_APPLY_FAILED",
                 "Patch hunks overlap or start outside the file"
             );
         }
-        if (newIndex !== output.length + (oldIndex - oldCursor)) {
+        if (
+            !hunk.inferredStart &&
+            hunkIndex(hunk.newStart, hunk.newCount) !==
+                output.length + (oldIndex - oldCursor)
+        ) {
             throw new ToolError(
                 "PATCH_APPLY_FAILED",
                 "New-file hunk positions are inconsistent"
@@ -360,4 +431,3 @@ export function applyParsedUnifiedDiff(
         : newlineMarkers.at(-1);
     return output.join("\n") + (finalNewline === true ? "\n" : "");
 }
-

@@ -33,6 +33,63 @@ function registration(
 }
 
 describe("controlled exec tool", () => {
+  it("hides the selector when only one Host-owned command is registered", () => {
+    const tool = registration([
+      {
+        id: "test",
+        description: "Run the deterministic task verifier",
+        command: process.execPath,
+        args: ["-e", ""]
+      }
+    ]);
+
+    expect(tool.definition.inputSchema).not.toHaveProperty("required");
+    expect(tool.definition.inputSchema.properties).toEqual({});
+    expect(tool.definition.inputSchema).toMatchObject({
+      properties: {},
+      additionalProperties: false
+    });
+    expect(tool.definition.description).toContain(
+      "Run the deterministic task verifier"
+    );
+  });
+
+  it("advertises every registered profile in registration order", () => {
+    const tool = registration([
+      {
+        id: "test",
+        description: "Run tests",
+        command: process.execPath,
+        args: ["-e", ""]
+      },
+      {
+        id: "lint",
+        description: "Check formatting and lint rules",
+        command: process.execPath,
+        args: ["-e", ""]
+      }
+    ]);
+
+    expect(tool.definition.inputSchema).toMatchObject({
+      required: ["profile"],
+      properties: {
+        profile: {
+          enum: ["test", "lint"],
+          description:
+            "Select one Host-approved command profile:\n" +
+            "- test: Run tests\n" +
+            "- lint: Check formatting and lint rules"
+        }
+      }
+    });
+  });
+
+  it("requires at least one Host-owned profile", () => {
+    expect(() => registration([])).toThrow(
+      "At least one exec profile is required"
+    );
+  });
+
   it("runs only the selected Host-owned profile in the fixed workspace cwd", async () => {
     const workspaceRoot = await createWorkspace();
     const tool = registration([
@@ -44,10 +101,7 @@ describe("controlled exec tool", () => {
       }
     ]);
 
-    const result = await tool.invoke(
-      { profile: "show_cwd" },
-      { workspaceRoot }
-    );
+    const result = await tool.invoke({}, { workspaceRoot });
 
     expect(result).toMatchObject({
       ok: true,
@@ -83,10 +137,7 @@ describe("controlled exec tool", () => {
       }
     ]);
 
-    const result = await tool.invoke(
-      { profile: "failing_test" },
-      { workspaceRoot }
-    );
+    const result = await tool.invoke({}, { workspaceRoot });
 
     expect(result).toMatchObject({
       ok: true,
@@ -100,7 +151,7 @@ describe("controlled exec tool", () => {
     });
   });
 
-  it("rejects a profile id that the Host did not allow", async () => {
+  it("rejects a profile id that the Host did not advertise", async () => {
     const workspaceRoot = await createWorkspace();
     const tool = registration([
       {
@@ -118,7 +169,7 @@ describe("controlled exec tool", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: { code: "EXEC_NOT_ALLOWED" }
+      error: { code: "INVALID_TOOL_INPUT" }
     });
   });
 
@@ -136,10 +187,7 @@ describe("controlled exec tool", () => {
       { maxOutputBytes: 64 }
     );
 
-    const result = await tool.invoke(
-      { profile: "loud" },
-      { workspaceRoot }
-    );
+    const result = await tool.invoke({}, { workspaceRoot });
 
     expect(result).toMatchObject({
       ok: false,
@@ -161,10 +209,7 @@ describe("controlled exec tool", () => {
       { timeoutMs: 100 }
     );
 
-    const result = await tool.invoke(
-      { profile: "hang" },
-      { workspaceRoot }
-    );
+    const result = await tool.invoke({}, { workspaceRoot });
 
     expect(result).toMatchObject({
       ok: false,
@@ -185,7 +230,6 @@ describe("controlled exec tool", () => {
 
     const result = await tool.invoke(
       {
-        profile: "test",
         argv: ["-e", "malicious()"]
       },
       { workspaceRoot }

@@ -32,6 +32,18 @@ interface ApplyPatchInput {
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/; 
 const MAX_PATCH_BYTES = 128 * 1024;
+const PATCH_DESCRIPTION = [
+    "A one-file unified diff. Substitute the requested path in this canonical form:\n",
+    "diff --git a/<path> b/<path>\n",
+    "--- a/<path>\n",
+    "+++ b/<path>\n",
+    "@@ -1 +1 @@\n",
+    "-old line\n",
+    "+new line\n",
+    "The diff --git and ---/+++ headers may be omitted. Hunk counts are treated as hints and recomputed from the body. ",
+    "A bare @@ header is also accepted when its unchanged/deleted source lines identify exactly one location. ",
+    "When file headers are present, every path must match the path input. Source context and baseHash are always checked exactly."
+].join("");
 
 function parseInput(input: JsonObject): ApplyPatchInput {
     if (
@@ -145,7 +157,7 @@ async function writeAtomic(
 const applyPatchTool: ExecutableTool<ApplyPatchInput> = {
     definition: {
         name: "apply_patch",
-        description: "Apply one strict unified text diff to one existing repository file after verifying its SHA-256 base hash.",
+        description: "Apply one exact unified text diff to one existing repository file after verifying its SHA-256 base hash.",
         inputSchema: {
             type: "object",
             properties: {
@@ -157,7 +169,8 @@ const applyPatchTool: ExecutableTool<ApplyPatchInput> = {
                 patch: {
                     type: "string",
                     minLength: 1,
-                    maxLength: MAX_PATCH_BYTES
+                    maxLength: MAX_PATCH_BYTES,
+                    description: PATCH_DESCRIPTION
                 }
             },
             required: ["path", "baseHash", "patch"],

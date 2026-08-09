@@ -84,7 +84,11 @@ describe("FakeStreamingProvider", ()=> {
             deltas: ["hel", "lo"],
             intervalMs: 0,
             usage,
-            response: { kind: "end_turn", text: "hello" }
+            response: {
+                kind: "end_turn",
+                text: "hello",
+                reasoningContent: "finished reasoning"
+            }
         });
 
         const events = await collect(
@@ -96,7 +100,12 @@ describe("FakeStreamingProvider", ()=> {
             { type: "text.delta", delta: "lo" },
             {
                 type: "response.completed",
-                response: { kind: "end_turn", text: "hello", usage}
+                response: {
+                    kind: "end_turn",
+                    text: "hello",
+                    reasoningContent: "finished reasoning",
+                    usage
+                }
             }
         ]);
 
@@ -134,7 +143,8 @@ describe("OpenAICompatibleProvider", () => {
                         {
                             message: {
                                 role: "assistant",
-                                content: null,
+                                content: "I will inspect the file.",
+                                reasoning_content: "I should inspect the file.",
                                 tool_calls: [
                                     {
                                         id: "call-1",
@@ -177,6 +187,8 @@ describe("OpenAICompatibleProvider", () => {
                     input: { path: "README.md" }
                 }
             ],
+            text: "I will inspect the file.",
+            reasoningContent: "I should inspect the file.",
             usage: {
                 inputTokens: 12,
                 outputTokens: 4,
@@ -206,6 +218,99 @@ describe("OpenAICompatibleProvider", () => {
             modelRevision: "test-model-2026-07-01"
         });
         expect(JSON.stringify(provider)).not.toContain("super-secret");
+    });
+
+    it("sends DeepSeek thinking controls and preserved reasoning without sampling defaults", async () => {
+        let receivedBody: Record<string, unknown> | undefined;
+        const fetch = vi.fn(async (_input, init?: RequestInit) => {
+            receivedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return new Response(
+                JSON.stringify({
+                    choices: [
+                        {
+                            message: {
+                                role: "assistant",
+                                content: "done",
+                                reasoning_content: "The tool result is sufficient."
+                            }
+                        }
+                    ]
+                }),
+                { status: 200 }
+            );
+        });
+        const provider = new OpenAICompatibleProvider({
+            baseUrl: "https://api.deepseek.com",
+            apiKey: "deepseek-secret",
+            model: "deepseek-v4-flash",
+            providerName: "deepseek",
+            thinkingType: "enabled",
+            reasoningEffort: "high",
+            fetch
+        });
+        const continuedRequest: ProviderRequest = {
+            ...request,
+            messages: [
+                ...request.messages,
+                {
+                    role: "assistant",
+                    content: "",
+                    reasoningContent: "I need to inspect README.md.",
+                    toolCalls: [
+                        {
+                            id: "call-deepseek-1",
+                            name: "read_file",
+                            input: { path: "README.md" }
+                        }
+                    ]
+                },
+                {
+                    role: "tool",
+                    callId: "call-deepseek-1",
+                    name: "read_file",
+                    result: { ok: true, output: "RepoCircuit" }
+                }
+            ]
+        };
+
+        await expect(provider.complete(continuedRequest)).resolves.toEqual({
+            kind: "end_turn",
+            text: "done",
+            reasoningContent: "The tool result is sufficient."
+        });
+
+        expect(receivedBody).toMatchObject({
+            model: "deepseek-v4-flash",
+            thinking: { type: "enabled" },
+            reasoning_effort: "high",
+            stream: false,
+            messages: [
+                { role: "system", content: "You are a coding agent." },
+                { role: "user", content: "Read README.md" },
+                {
+                    role: "assistant",
+                    content: "",
+                    reasoning_content: "I need to inspect README.md.",
+                    tool_calls: [
+                        {
+                            id: "call-deepseek-1",
+                            type: "function",
+                            function: {
+                                name: "read_file",
+                                arguments: "{\"path\":\"README.md\"}"
+                            }
+                        }
+                    ]
+                },
+                {
+                    role: "tool",
+                    tool_call_id: "call-deepseek-1"
+                }
+            ]
+        });
+        expect(receivedBody).not.toHaveProperty("temperature");
+        expect(receivedBody).not.toHaveProperty("top_p");
+        expect(provider.descriptor.provider).toBe("deepseek");
     });
 
     it("parses fragmented SSE text and usage while passing the same signal", async () => {
@@ -273,8 +378,8 @@ describe("OpenAICompatibleProvider", () => {
     it("assembles fragmented streaming tool calls", async () => {
         const fetch = vi.fn(async () => 
             sseResponse([
-                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_","arguments":"{\\"path\\":"}}]}}]}\n\n',
-                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":"\\"README.md\\"}"}}]}}]}\n\n',
+                'data: {"choices":[{"delta":{"reasoning_content":"Need ","tool_calls":[{"index":0,"id":"call-2","function":{"name":"read_","arguments":"{\\"path\\":"}}]}}]}\n\n',
+                'data: {"choices":[{"delta":{"reasoning_content":"the file.","tool_calls":[{"index":0,"function":{"name":"file","arguments":"\\"README.md\\"}"}}]}}]}\n\n',
                 "data: [DONE]\n\n"
             ])
         );
@@ -292,6 +397,7 @@ describe("OpenAICompatibleProvider", () => {
                 type: "response.completed",
                 response: {
                     kind: "tool_use",
+                    reasoningContent: "Need the file.",
                     calls: [
                         {
                             id: "call-2",
@@ -305,5 +411,3 @@ describe("OpenAICompatibleProvider", () => {
     });
 
 })
-
-

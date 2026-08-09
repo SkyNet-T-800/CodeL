@@ -27,20 +27,7 @@ function responseWithUsage(
     if (usage === undefined) {
         return response;
     }
-
-    if (response.kind === "tool_use") {
-        return {
-            kind: "tool_use",
-            calls: response.calls,
-            usage
-        }
-    }
-
-    return {
-        kind: "end_turn",
-        text: response.text,
-        usage
-    }
+    return { ...response, usage };
 }
 
 async function waitForInterval(

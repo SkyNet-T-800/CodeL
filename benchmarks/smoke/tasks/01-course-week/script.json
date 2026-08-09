@@ -24,7 +24,7 @@
   {
     "kind": "tool_use",
     "calls": [
-      { "id": "01-test", "name": "exec", "input": { "profile": "test" } }
+      { "id": "01-test", "name": "exec", "input": {} }
     ],
     "usage": { "inputTokens": 220, "outputTokens": 20, "totalTokens": 240, "complete": true }
   },

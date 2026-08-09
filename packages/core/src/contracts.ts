@@ -94,10 +94,15 @@ export interface VerificationResult {
 export type AgentMessage = 
   | { readonly role: "user"; readonly content: string}
   | { readonly role: "assistant";
-      readonly content: "";
+      readonly content: string;
       readonly toolCalls: readonly ToolCall[];
-    }  
-  | { readonly role: "assistant"; readonly content: string}  
+      readonly reasoningContent?: string;
+    }
+  | {
+      readonly role: "assistant";
+      readonly content: string;
+      readonly reasoningContent?: string;
+    }
   | {
       readonly role: "tool";
       readonly callId: string;
@@ -118,6 +123,7 @@ export interface ProviderRequest {
 
 interface ModelResponseBase {
     readonly usage?: TokenUsage;
+    readonly reasoningContent?: string;
 }
 
 export type ModelResponse =
@@ -125,6 +131,7 @@ export type ModelResponse =
         ModelResponseBase & {
             readonly kind: "tool_use";
             readonly calls: readonly ToolCall[];
+            readonly text?: string;
         })
     | ( ModelResponseBase & {
         readonly kind: "end_turn";
@@ -369,4 +376,3 @@ export interface RunMeta extends FrozenRunConfiguration {
     readonly outcome: RunOutcome;
     readonly artifacts: RunArtifacts;
 }
-

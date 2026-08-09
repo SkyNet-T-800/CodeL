@@ -7,6 +7,7 @@ import {
   type FrozenRunConfiguration,
   type ModelAdapter,
   type RegisteredTool,
+  type RunBudget,
   type TaskSpec
 } from "@repo-circuit/core";
 
@@ -88,6 +89,7 @@ export interface CreateRunConfigurationInput {
   readonly systemPrompt: string;
   readonly verifierVersion: string;
   readonly modelSettings: ModelRunSettings;
+  readonly budget?: Partial<RunBudget>;
   readonly repositoryRoot: string;
   readonly baseSha: string;
 }
@@ -145,7 +147,7 @@ export async function createRunConfiguration(
       contextStrategy: "full-transcript-v1",
       maxContextTokens: "unsupported"
     },
-    budget: resolveRunBudget(input.task),
+    budget: resolveRunBudget(input.task, input.budget),
     evaluation: {
       verifierVersion: input.verifierVersion,
       evaluatorCommit: commit,

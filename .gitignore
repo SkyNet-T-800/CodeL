@@ -5,6 +5,7 @@ dist/
 coverage/
 *.tsbuildinfo
 .traces/
+/runs/w3-*/
 
 # Local environment and editor files
 .env

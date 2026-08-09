@@ -80,6 +80,83 @@ describe("apply_patch tool", () => {
         await expect(readFile(fixture.filePath, "utf8")).resolves.toBe("alpha\nnew\nomega\n");
     });
 
+    it("accepts omitted unit counts in a standard hunk header", async () => {
+        const fixture = await createWorkspace();
+        const patch = [
+            "diff --git a/src/message.txt b/src/message.txt",
+            "--- a/src/message.txt",
+            "+++ b/src/message.txt",
+            "@@ -2 +2 @@",
+            "-old",
+            "+new",
+            ""
+        ].join("\n");
+
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({ ok: true });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            "alpha\nnew\nomega\n"
+        );
+    });
+
+    it("accepts ordinary unified-diff file headers", async () => {
+        const fixture = await createWorkspace();
+        const patch = [
+            "--- src/message.txt",
+            "+++ src/message.txt",
+            "@@ -2 +2 @@",
+            "-old",
+            "+new",
+            ""
+        ].join("\n");
+
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({ ok: true });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            "alpha\nnew\nomega\n"
+        );
+    });
+
+    it("accepts a patch that begins directly with a standard hunk", async () => {
+        const fixture = await createWorkspace();
+        const patch = [
+            "@@ -2 +2 @@",
+            "-old",
+            "+new",
+            ""
+        ].join("\n");
+
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({ ok: true });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            "alpha\nnew\nomega\n"
+        );
+    });
+
     it("rejects a stale base hash without changing the file", async () => {
         const fixture = await createWorkspace();
         const result = await applyPatchToolRegistration.invoke(
@@ -153,6 +230,130 @@ describe("apply_patch tool", () => {
         });
         await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
         fixture.source
+        );
+    });
+
+    it("rejects mismatched ordinary unified-diff headers", async () => {
+        const fixture = await createWorkspace();
+        const patch = [
+            "--- src/other.txt",
+            "+++ src/other.txt",
+            "@@ -2 +2 @@",
+            "-old",
+            "+new",
+            ""
+        ].join("\n");
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: { code: "PATCH_INVALID" }
+        });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            fixture.source
+        );
+    });
+
+    it("accepts a bare hunk when its source lines identify one location", async () => {
+        const fixture = await createWorkspace();
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch: "@@\n alpha\n-old\n+new\n omega\n"
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({ ok: true });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            "alpha\nnew\nomega\n"
+        );
+    });
+
+    it("rejects a bare hunk whose source lines are ambiguous", async () => {
+        const fixture = await createWorkspace();
+        await writeFile(fixture.filePath, "old\nold\n", "utf8");
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex("old\nold\n"),
+                patch: "@@\n-old\n+new\n"
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: { code: "PATCH_APPLY_FAILED" }
+        });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            "old\nold\n"
+        );
+    });
+
+    it("rejects a patch containing a second file", async () => {
+        const fixture = await createWorkspace();
+        const patch = [
+            "diff --git a/src/message.txt b/src/message.txt",
+            "--- a/src/message.txt",
+            "+++ b/src/message.txt",
+            "@@ -2 +2 @@",
+            "-old",
+            "+new",
+            "diff --git a/src/other.txt b/src/other.txt",
+            "--- a/src/other.txt",
+            "+++ b/src/other.txt",
+            "@@ -1 +1 @@",
+            "-before",
+            "+after",
+            ""
+        ].join("\n");
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            error: { code: "PATCH_INVALID" }
+        });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            fixture.source
+        );
+    });
+
+    it("recomputes inaccurate declared hunk counts from the body", async () => {
+        const fixture = await createWorkspace();
+        const patch = [
+            "@@ -2,2 +2 @@",
+            "-old",
+            "+new",
+            ""
+        ].join("\n");
+        const result = await applyPatchToolRegistration.invoke(
+            {
+                path: "src/message.txt",
+                baseHash: sha256Hex(fixture.source),
+                patch
+            },
+            { workspaceRoot: fixture.workspaceRoot }
+        );
+
+        expect(result).toMatchObject({ ok: true });
+        await expect(readFile(fixture.filePath, "utf8")).resolves.toBe(
+            "alpha\nnew\nomega\n"
         );
     });
 

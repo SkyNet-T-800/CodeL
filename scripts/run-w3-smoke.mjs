@@ -19,10 +19,29 @@ function valueAfter(args, flag) {
   return index === -1 ? undefined : args[index + 1];
 }
 
+function positiveIntegerAfter(args, flag) {
+  const index = args.indexOf(flag);
+  if (index === -1) {
+    return undefined;
+  }
+  const raw = args[index + 1];
+  const value = Number(raw);
+  if (
+    raw === undefined ||
+    raw.startsWith("--") ||
+    !Number.isSafeInteger(value) ||
+    value < 1
+  ) {
+    throw new Error(`${flag} must be followed by a positive integer`);
+  }
+  return String(value);
+}
+
 const args = process.argv.slice(2);
 const provider = valueAfter(args, "--provider") ?? "scripted";
-if (provider !== "scripted" && provider !== "openai") {
-  throw new Error("--provider must be scripted or openai");
+const maxSteps = positiveIntegerAfter(args, "--max-steps");
+if (provider !== "scripted" && provider !== "openai" && provider !== "deepseek") {
+  throw new Error("--provider must be scripted, openai, or deepseek");
 }
 const runsDir = resolve(
   repositoryRoot,
@@ -100,7 +119,8 @@ for (const taskDirectory of taskDirectories) {
         "--run-id",
         runId,
         "--attempt-index",
-        "0"
+        "0",
+        ...(maxSteps === undefined ? [] : ["--max-steps", maxSteps])
       ],
       {
         cwd: repositoryRoot,

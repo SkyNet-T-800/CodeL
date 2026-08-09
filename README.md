@@ -1,6 +1,6 @@
-# RepoCircuit · Week 1 Runtime Skeleton
+# RepoCircuit · Coding Agent Runtime
 
-这是 Coding Agent 第 1 周的**参考实现**：在不连接真实模型、不使用 API Key 的前提下，用确定性的 Mock Provider 跑通一次完整的 Agent Run，并输出可逐行解析、可重复比对的 JSONL Trace。
+这是 Coding Agent 的参考实现：既可以用确定性的 Mock Provider 跑通可重复比对的 Agent Run，也可以连接 OpenAI-compatible API 运行 W3 coding benchmark。
 
 它不是唯一正确答案，但覆盖了本周计划的全部硬性验收项。
 
@@ -13,7 +13,7 @@ TaskSpec → Mock Provider(tool_use) → read_file → Tool Result 回填
          → Mock Provider(end_turn) → completed → JSONL Trace
 ```
 
-本版本刻意**不做**真实模型、Session、数据库、UI、Docker Sandbox、写文件工具和网络访问。这些都不是 W1 的范围。
+W1 演示仍然完全离线；W3 已支持真实模型、流式输出、工具调用和确定性 verifier。Session、数据库、UI 和 Docker Sandbox 仍不在当前范围内。
 
 ## 环境
 
@@ -26,22 +26,60 @@ corepack prepare pnpm@10.25.0 --activate
 pnpm install --frozen-lockfile
 ```
 
+## 使用 DeepSeek V4 Flash
+
+CLI 内置了 DeepSeek 配置，默认值如下：
+
+- API 地址：`https://api.deepseek.com`
+- 模型：`deepseek-v4-flash`
+- 思考模式：`enabled`
+- Reasoning effort：`high`
+- DeepSeek smoke 最大步骤数：`8`（CLI 可用 `--max-steps` 覆盖）
+
+在 zsh 中安全输入 Key，并运行 6 个 W3 smoke tasks：
+
+```zsh
+read -r -s "DEEPSEEK_API_KEY?DeepSeek API Key: "
+echo
+export DEEPSEEK_API_KEY
+pnpm smoke:w3:deepseek
+unset DEEPSEEK_API_KEY
+```
+
+每次任务的 Trace、diff、测试结果和运行元数据会写入 `runs/<run-id>/`。项目不会自动读取 `.env`，也不要把真实 Key 写入仓库。
+
+需要降低思考强度时，可以保持思考模式并改成 `low`：
+
+```bash
+REPO_CIRCUIT_REASONING_EFFORT=low pnpm smoke:w3:deepseek
+```
+
+关闭思考模式时，不要同时设置 `REPO_CIRCUIT_REASONING_EFFORT`：
+
+```bash
+REPO_CIRCUIT_THINKING=disabled pnpm smoke:w3:deepseek
+```
+
+也可以通过 `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 和 `DEEPSEEK_PROVIDER_NAME` 覆盖默认配置。DeepSeek 使用专用变量，避免误用当前 shell 里遗留的 OpenAI/Kimi endpoint。`DEEPSEEK_API_KEY` 优先；如果未设置，CLI 会回退到 `REPO_CIRCUIT_API_KEY`。
+
+如需让一次运行进入 baseline 比较，还要显式填写可复现的 `DEEPSEEK_MODEL_REVISION`；不填写时会如实记录为 `unknown`，普通运行不受影响。
+
 ## 一条命令验收
 
 ```bash
 pnpm verify
 ```
 
-它会依次执行：严格类型检查、7 个测试、TypeScript 构建、构建后 CLI Smoke Run、实际 Trace 与 golden Trace 的逐字节比较。
+它会依次执行：严格类型检查、全量测试、TypeScript 构建，以及 6 个离线 W3 CLI smoke tasks。
 
-预期末尾输出：
+预期末尾的汇总包含：
 
-```text
-✓ Run fixture-readme-run completed in 2 steps
-Trace: .traces/fixture-run.jsonl
-Final: Fixture README read successfully: RepoCircuit Fixture.
-✓ Trace matches golden fixture (9 events)
-✓ Final state matches golden fixture
+```json
+{
+  "attempted": 6,
+  "completed": 4,
+  "acceptance": "passed"
+}
 ```
 
 ## 单独运行 CLI
@@ -141,9 +179,9 @@ pnpm typecheck       # strict TypeScript，不输出文件
 pnpm test            # 单元与集成测试
 pnpm build           # project references 构建所有 workspace 包
 pnpm dev -- run ...  # 可选：直接运行 TypeScript 源码进行开发
-pnpm smoke:w1        # 启动构建后的 CLI，生成真实 Trace
-pnpm trace:check     # 与 committed golden Trace 逐字节比较
-pnpm verify          # CI 使用的完整门禁
+pnpm smoke:w3        # 构建并运行 6 个离线 W3 smoke tasks
+pnpm smoke:w3:deepseek # 使用真实 DeepSeek V4 Flash 运行同一组任务
+pnpm verify          # typecheck + tests + W3 smoke 完整门禁
 ```
 
 ## W1 验收对应关系

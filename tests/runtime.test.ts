@@ -22,6 +22,7 @@ class MemoryEventSink implements EventSink {
 
 class QueueProvider implements ModelAdapter {
     readonly name = "w3-queue";
+    readonly requests: ProviderRequest[] = [];
     readonly #responses: ModelResponse[];
 
     constructor(responses: readonly ModelResponse[]) {
@@ -29,9 +30,10 @@ class QueueProvider implements ModelAdapter {
     }
 
     async complete(
-        _request: ProviderRequest,
+        request: ProviderRequest,
         signal?: AbortSignal): Promise<ModelResponse> {
             signal?.throwIfAborted();
+            this.requests.push(request);
             const response = this.#responses.shift();
             if (response === undefined) {
                 throw new Error("response queue exhausted");
@@ -171,6 +173,61 @@ describe("W3 agent loop", () => {
         );
         expect(types).toContain("verify.result");
         expect(types.at(-1)).toBe("run.end");
+    });
+
+    it("preserves reasoning content in subsequent Provider requests", async () => {
+        const failed: VerificationResult = {
+            passed: false,
+            summary: "try again",
+            testResult: {
+                status: "failed",
+                exitCode: 1,
+                summary: "not yet",
+                durationMs: 0
+            }
+        };
+        const toolCall = {
+            id: "reasoning-call",
+            name: "echo",
+            input: { text: "hello" }
+        } as const;
+        const provider = new QueueProvider([
+            {
+                kind: "tool_use",
+                calls: [toolCall],
+                text: "I will inspect with the tool.",
+                reasoningContent: "I should inspect with the echo tool.",
+                usage: usage()
+            },
+            {
+                kind: "end_turn",
+                text: "first answer",
+                reasoningContent: "The first result may need verification.",
+                usage: usage()
+            },
+            {
+                kind: "end_turn",
+                text: "corrected answer",
+                usage: usage()
+            }
+        ]);
+
+        const { state } = await execute(provider, {
+            verifier: new FixedVerifier([failed, passedVerification])
+        });
+
+        expect(state.status).toBe("completed");
+        expect(provider.requests[1]?.messages).toContainEqual({
+            role: "assistant",
+            content: "I will inspect with the tool.",
+            toolCalls: [toolCall],
+            reasoningContent: "I should inspect with the echo tool."
+        });
+        expect(provider.requests[2]?.messages).toContainEqual({
+            role: "assistant",
+            content: "first answer",
+            reasoningContent: "The first result may need verification."
+        });
     });
 
     it("returns a typed observation for a forbidden tool call", async () => {
@@ -495,4 +552,3 @@ describe("W3 agent loop", () => {
   });
 
 })
-

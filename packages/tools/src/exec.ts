@@ -65,20 +65,36 @@ function validateProfiles(
     }
     byId.set(profile.id, profile);
   }
+  if (byId.size === 0) {
+    throw new Error("At least one exec profile is required");
+  }
   return byId;
 }
 
 /**
  * Construct the exec capability from a Host-owned allowlist.
  *
- * Model input contains only a profile id. Executable, arguments, environment,
- * cwd and resource limits remain trusted Host data.
+ * With one profile the schema exposes no selector; with multiple profiles the
+ * model supplies only a profile id. Executable, arguments, environment, cwd
+ * and resource limits remain trusted Host data.
  */
 export function createExecToolRegistration(
   profiles: readonly ExecProfile[],
   options: ExecToolOptions = {}
 ): RegisteredTool {
   const profilesById = validateProfiles(profiles);
+  const profileIds = [...profilesById.keys()];
+  const defaultProfileId = profileIds.length === 1 ? profileIds[0] : undefined;
+  const defaultProfile =
+    defaultProfileId === undefined
+      ? undefined
+      : profilesById.get(defaultProfileId);
+  const profileDescription = [
+    "Select one Host-approved command profile:",
+    ...[...profilesById.values()].map(
+      (profile) => `- ${profile.id}: ${profile.description}`
+    )
+  ].join("\n");
   const hardTimeoutMs = positiveInteger(
     options.timeoutMs ?? DEFAULT_TOOL_LIMITS.execTimeoutMs,
     "exec timeoutMs"
@@ -91,16 +107,22 @@ export function createExecToolRegistration(
     definition: {
       name: "exec",
       description:
-        "Run one Host-approved command profile with a fixed cwd, environment, timeout, and output limit.",
+        defaultProfileId === undefined
+          ? "Run one selected Host-approved command profile with a fixed cwd, environment, timeout, and output limit."
+          : `Run the fixed Host-approved command (${defaultProfile?.description ?? defaultProfileId}) with the repository as cwd. No input fields are needed.`,
       inputSchema: {
         type: "object",
-        properties: {
-          profile: {
-            type: "string",
-            pattern: "^[a-z][a-z0-9_-]{0,63}$"
-          }
-        },
-        required: ["profile"],
+        properties:
+          defaultProfileId === undefined
+            ? {
+                profile: {
+                  type: "string",
+                  enum: profileIds,
+                  description: profileDescription
+                }
+              }
+            : {},
+        ...(defaultProfileId === undefined ? { required: ["profile"] } : {}),
         additionalProperties: false
       },
       outputSchema: {
@@ -133,6 +155,9 @@ export function createExecToolRegistration(
     },
 
     parse(input: JsonObject): ExecInput {
+      if (defaultProfileId !== undefined) {
+        return { profile: defaultProfileId };
+      }
       if (typeof input.profile !== "string") {
         throw new ToolError(
           "INVALID_ARGUMENT",

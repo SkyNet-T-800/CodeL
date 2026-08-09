@@ -65,27 +65,37 @@ interface RunArguments {
   readonly taskPath: string;
   readonly runsDir: string;
   readonly runId: string | undefined;
-  readonly provider: "scripted" | "openai";
+  readonly provider: "scripted" | "openai" | "deepseek";
   readonly scriptPath: string | undefined;
   readonly workspacePath: string | undefined;
   readonly comparisonId: string | null;
   readonly attemptIndex: number;
+  readonly maxSteps: number | undefined;
 }
 
 function usage(): string {
   return [
     "Usage:",
-    "  repo-circuit run --task <task.json> [--provider scripted|openai]",
+    "  repo-circuit run --task <task.json> [--provider scripted|openai|deepseek]",
     "    [--runs-dir <runs>] [--run-id <id>] [--workspace <copied-workspace>]",
     "    [--script <script.json>] [--comparison-id <id>] [--attempt-index <n>]",
+    "    [--max-steps <positive-integer>]",
     "  repo-circuit compare --a <run-meta.json> --b <run-meta.json>",
     "    [--output <manifest.json>] [--meta-only]",
     "  repo-circuit baseline-check --meta <run-meta.json>",
     "",
     "Real Provider environment:",
-    "  REPO_CIRCUIT_API_KEY, REPO_CIRCUIT_BASE_URL, REPO_CIRCUIT_MODEL",
-    "  optional: REPO_CIRCUIT_PROVIDER_NAME, REPO_CIRCUIT_MODEL_REVISION,",
-    "            REPO_CIRCUIT_TEMPERATURE (default 0, sent and recorded)"
+    "  openai: REPO_CIRCUIT_API_KEY, REPO_CIRCUIT_BASE_URL, REPO_CIRCUIT_MODEL",
+    "  deepseek: DEEPSEEK_API_KEY (or REPO_CIRCUIT_API_KEY fallback)",
+    "            defaults: https://api.deepseek.com, deepseek-v4-flash",
+    "            optional: DEEPSEEK_BASE_URL, DEEPSEEK_MODEL,",
+    "                      DEEPSEEK_PROVIDER_NAME, DEEPSEEK_MODEL_REVISION",
+    "  openai optional: REPO_CIRCUIT_PROVIDER_NAME, REPO_CIRCUIT_MODEL_REVISION",
+    "  shared optional:",
+    "            REPO_CIRCUIT_REASONING_EFFORT (low|high|max),",
+    "            REPO_CIRCUIT_THINKING (enabled|disabled),",
+    "            REPO_CIRCUIT_TEMPERATURE (openai default 0; only available",
+    "            when DeepSeek thinking is disabled)"
   ].join("\n");
 }
 
@@ -120,10 +130,23 @@ function nonNegativeInteger(value: string, flag: string): number {
   return parsed;
 }
 
+function positiveInteger(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${flag} must be a positive integer`);
+  }
+  return parsed;
+}
+
 function parseRunArguments(args: readonly string[]): RunArguments {
   const provider = valueAfter(args, "--provider") ?? "scripted";
-  if (provider !== "scripted" && provider !== "openai") {
-    throw new Error(`--provider must be scripted or openai`);
+  const maxSteps = valueAfter(args, "--max-steps");
+  if (
+    provider !== "scripted" &&
+    provider !== "openai" &&
+    provider !== "deepseek"
+  ) {
+    throw new Error(`--provider must be scripted, openai, or deepseek`);
   }
   return {
     taskPath: requiredValue(args, "--task"),
@@ -136,7 +159,11 @@ function parseRunArguments(args: readonly string[]): RunArguments {
     attemptIndex: nonNegativeInteger(
       valueAfter(args, "--attempt-index") ?? "0",
       "--attempt-index"
-    )
+    ),
+    maxSteps:
+      maxSteps === undefined
+        ? undefined
+        : positiveInteger(maxSteps, "--max-steps")
   };
 }
 
@@ -254,10 +281,13 @@ async function resolveWorkspace(
   return workspace;
 }
 
-function requiredEnvironment(name: string): string {
+function requiredEnvironment(
+  name: string,
+  provider: "openai" | "deepseek"
+): string {
   const value = process.env[name];
   if (value === undefined || value.trim().length === 0) {
-    throw new Error(`${name} is required for --provider openai`);
+    throw new Error(`${name} is required for --provider ${provider}`);
   }
   return value;
 }
@@ -273,13 +303,47 @@ function optionalEnvironment(name: string): string | undefined {
   return value;
 }
 
-function parseTemperature(): number {
-  const raw = process.env.REPO_CIRCUIT_TEMPERATURE ?? "0";
+function parseTemperature(raw: string | undefined): number | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0 || value > 2) {
     throw new Error("REPO_CIRCUIT_TEMPERATURE must be between 0 and 2");
   }
   return value;
+}
+
+type ReasoningEffort = "low" | "high" | "max";
+type ThinkingType = "enabled" | "disabled";
+
+function parseChoice<T extends string>(
+  name: string,
+  allowed: readonly T[],
+  fallback?: T
+): T | undefined {
+  const raw = optionalEnvironment(name);
+  if (raw === undefined) {
+    return fallback;
+  }
+  if (!allowed.includes(raw as T)) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  }
+  return raw as T;
+}
+
+function deepSeekApiKey(): string {
+  const providerKey = optionalEnvironment("DEEPSEEK_API_KEY");
+  if (providerKey !== undefined) {
+    return providerKey;
+  }
+  const fallbackKey = process.env.REPO_CIRCUIT_API_KEY;
+  if (fallbackKey === undefined || fallbackKey.trim().length === 0) {
+    throw new Error(
+      "DEEPSEEK_API_KEY or REPO_CIRCUIT_API_KEY is required for --provider deepseek"
+    );
+  }
+  return fallbackKey;
 }
 
 async function createProvider(
@@ -305,23 +369,94 @@ async function createProvider(
     }
   }
 
-  const temperature = parseTemperature();
-  const modelRevision = optionalEnvironment("REPO_CIRCUIT_MODEL_REVISION");
+  const realProvider = args.provider;
+  const isDeepSeek = realProvider === "deepseek";
+  const modelRevision = optionalEnvironment(
+    isDeepSeek ? "DEEPSEEK_MODEL_REVISION" : "REPO_CIRCUIT_MODEL_REVISION"
+  );
+  const thinkingType = parseChoice<ThinkingType>(
+    "REPO_CIRCUIT_THINKING",
+    ["enabled", "disabled"],
+    isDeepSeek ? "enabled" : undefined
+  );
+  const configuredReasoningEffort = parseChoice<ReasoningEffort>(
+    "REPO_CIRCUIT_REASONING_EFFORT",
+    ["low", "high", "max"]
+  );
+  if (
+    thinkingType === "disabled" &&
+    configuredReasoningEffort !== undefined
+  ) {
+    throw new Error(
+      "REPO_CIRCUIT_REASONING_EFFORT cannot be set when REPO_CIRCUIT_THINKING=disabled"
+    );
+  }
+  const reasoningEffort =
+    configuredReasoningEffort ??
+    (isDeepSeek && thinkingType === "enabled" ? "high" : undefined);
+  const rawTemperature = optionalEnvironment("REPO_CIRCUIT_TEMPERATURE");
+  if (
+    isDeepSeek &&
+    thinkingType === "enabled" &&
+    rawTemperature !== undefined
+  ) {
+    throw new Error(
+      "REPO_CIRCUIT_TEMPERATURE cannot be set when DeepSeek thinking is enabled"
+    );
+  }
+  const temperature = parseTemperature(
+    rawTemperature ?? (isDeepSeek ? undefined : "0")
+  );
+  const apiKey = isDeepSeek
+    ? deepSeekApiKey()
+    : requiredEnvironment("REPO_CIRCUIT_API_KEY", "openai");
+  const baseUrl = isDeepSeek
+    ? optionalEnvironment("DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com"
+    : optionalEnvironment("REPO_CIRCUIT_BASE_URL");
+  const model = isDeepSeek
+    ? optionalEnvironment("DEEPSEEK_MODEL") ?? "deepseek-v4-flash"
+    : optionalEnvironment("REPO_CIRCUIT_MODEL");
+
+  if (baseUrl === undefined) {
+    throw new Error("REPO_CIRCUIT_BASE_URL is required for --provider openai");
+  }
+  if (model === undefined) {
+    throw new Error("REPO_CIRCUIT_MODEL is required for --provider openai");
+  }
 
   return {
     provider: new OpenAICompatibleProvider({
-      apiKey: requiredEnvironment("REPO_CIRCUIT_API_KEY"),
-      baseUrl: requiredEnvironment("REPO_CIRCUIT_BASE_URL"),
-      model: requiredEnvironment("REPO_CIRCUIT_MODEL"),
+      apiKey,
+      baseUrl,
+      model,
       ...(modelRevision === undefined ? {} : { modelRevision }),
-      providerName: optionalEnvironment("REPO_CIRCUIT_PROVIDER_NAME") ?? "openai-compatible",
-      temperature,
-      topP: 1
+      providerName:
+        optionalEnvironment(
+          isDeepSeek
+            ? "DEEPSEEK_PROVIDER_NAME"
+            : "REPO_CIRCUIT_PROVIDER_NAME"
+        ) ??
+        (isDeepSeek ? "deepseek" : "openai-compatible"),
+      ...(temperature === undefined ? {} : { temperature }),
+      ...(isDeepSeek ? {} : { topP: 1 }),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      ...(thinkingType === undefined ? {} : { thinkingType })
     }),
     modelSettings: {
-      reasoningEffort: "unsupported",
-      temperature,
-      topP: "unsupported",
+      reasoningEffort:
+        thinkingType === "disabled"
+          ? "disabled"
+          : (reasoningEffort ?? (isDeepSeek ? "unknown" : "unsupported")),
+      temperature: isDeepSeek
+        ? thinkingType === "enabled"
+          ? "unsupported"
+          : (temperature ?? 1)
+        : (temperature ?? 0),
+      topP: isDeepSeek
+        ? thinkingType === "enabled"
+          ? "unsupported"
+          : 1
+        : "unsupported",
       seed: "unsupported"
     }
   }
@@ -475,7 +610,7 @@ async function runCommand(args: RunArguments): Promise<number> {
   });
   const tools = createWeekTwoToolRegistrations([
     {
-      id: "test",
+      id: "verify",
       description: "Run the deterministic public smoke tests",
       command: process.execPath,
       args: [verifierPath],
@@ -496,6 +631,9 @@ async function runCommand(args: RunArguments): Promise<number> {
     systemPrompt: W3_SYSTEM_PROMPT,
     verifierVersion: verifier.version,
     modelSettings,
+    ...(args.maxSteps === undefined
+      ? {}
+      : { budget: { maxSteps: args.maxSteps } }),
     repositoryRoot: implementationRoot,
     baseSha: workspaceIdentity.baseSha
   });
@@ -643,8 +781,3 @@ async function main(args: readonly string[]): Promise<number> {
 }
 
 process.exitCode = await main(process.argv.slice(2));
-
-
-
-
-

@@ -28,6 +28,8 @@ export interface OpenAICompatibleProviderOptions {
     readonly headers?: Readonly<Record<string, string>>;
     readonly temperature?: number;
     readonly topP?: number;
+    readonly thinkingType?: "enabled" | "disabled";
+    readonly reasoningEffort?: "low" | "high" | "max";
     readonly fetch?: ProviderFetch;
 }
 
@@ -189,10 +191,13 @@ type ResponseWithoutUsage =
   | {
       readonly kind: "tool_use";
       readonly calls: readonly ToolCall[];
+      readonly text?: string;
+      readonly reasoningContent?: string;
     }
   | {
       readonly kind: "end_turn";
       readonly text: string;
+      readonly reasoningContent?: string;
     };
 
 function withUsage(
@@ -200,6 +205,21 @@ function withUsage(
   usage: TokenUsage | undefined
 ): ModelResponse {
   return usage === undefined ? response : { ...response, usage };
+}
+
+function parseReasoningContent(
+  value: unknown,
+  context: "completion" | "stream"
+): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw protocolError(
+      `Provider returned unsupported reasoning_content in ${context}`
+    );
+  }
+  return value;
 }
 
 function sealCompletionPayload(value: unknown): ModelResponse {
@@ -212,11 +232,18 @@ function sealCompletionPayload(value: unknown): ModelResponse {
     }
     const message = choice.message;
     const usage = parseUsage(value.usage);
+    const reasoningContent = parseReasoningContent(
+      message.reasoning_content,
+      "completion"
+    );
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        const text = parseTextContent(message.content);
         return withUsage(
             {
                 kind: "tool_use",
-                calls: message.tool_calls.map(parseToolCall)
+                calls: message.tool_calls.map(parseToolCall),
+                ...(text.length === 0 ? {} : { text }),
+                ...(reasoningContent === undefined ? {} : { reasoningContent })
             },
             usage
         );
@@ -225,7 +252,8 @@ function sealCompletionPayload(value: unknown): ModelResponse {
     return withUsage(
         {
             kind: "end_turn",
-            text: parseTextContent(message.content)
+            text: parseTextContent(message.content),
+            ...(reasoningContent === undefined ? {} : { reasoningContent })
         },
         usage
     );
@@ -274,11 +302,19 @@ function appendToolCallDeltas(
 
 function sealStreamResponse(
     text: string,
+    reasoningContent: string | undefined,
     pending: Map<number, PendingToolCall>,
     usage: TokenUsage | undefined
 ): ModelResponse {
     if (pending.size === 0) {
-        return withUsage({ kind: "end_turn", text }, usage);
+        return withUsage(
+          {
+            kind: "end_turn",
+            text,
+            ...(reasoningContent === undefined ? {} : { reasoningContent })
+          },
+          usage
+        );
     }
 
     const calls = [...pending.values()]
@@ -295,7 +331,15 @@ function sealStreamResponse(
             input: parseToolInput(call.arguments)
         };
       });
-    return withUsage({ kind: "tool_use", calls }, usage);
+    return withUsage(
+      {
+        kind: "tool_use",
+        calls,
+        ...(text.length === 0 ? {} : { text }),
+        ...(reasoningContent === undefined ? {} : { reasoningContent })
+      },
+      usage
+    );
 }
 
 function serializeToolResult(message: Extract<AgentMessage, { role: "tool" }>) {
@@ -310,7 +354,10 @@ function toChatMessage(message: AgentMessage): Record<string, unknown> {
           if ("toolCalls" in message) {
             return {
               role: "assistant",  
-              content: null,
+              content: message.content,
+              ...(message.reasoningContent === undefined
+                ? {}
+                : { reasoning_content: message.reasoningContent }),
               tool_calls: message.toolCalls.map((call) => ({
                 id: call.id,
                 type: "function",
@@ -321,7 +368,13 @@ function toChatMessage(message: AgentMessage): Record<string, unknown> {
               }))
             };
           }
-          return { role: "assistant", content: message.content };  
+          return {
+            role: "assistant",
+            content: message.content,
+            ...(message.reasoningContent === undefined
+              ? {}
+              : { reasoning_content: message.reasoningContent })
+          };
         case "tool":
           return {
             role: "tool",
@@ -341,6 +394,8 @@ function createBody(
     model: string,
     temperature: number | undefined,
     topP: number | undefined,
+    thinkingType: "enabled" | "disabled" | undefined,
+    reasoningEffort: "low" | "high" | "max" | undefined,
     stream: boolean
 ): Record<string, unknown> {
     const messages: Record<string, unknown>[] = [];
@@ -362,6 +417,12 @@ function createBody(
         })),
         ...(temperature === undefined ? {} : { temperature }),
         ...(topP === undefined ? {} : { top_p: topP }),
+        ...(thinkingType === undefined
+          ? {}
+          : { thinking: { type: thinkingType } }),
+        ...(reasoningEffort === undefined
+          ? {}
+          : { reasoning_effort: reasoningEffort }),
         stream,
         ...(stream ? { stream_options: { include_usage: true } } : {})
     };
@@ -483,6 +544,8 @@ export class OpenAICompatibleProvider implements ModelAdapter {
     readonly #model: string;
     readonly #temperature: number | undefined;
     readonly #topP: number | undefined;
+    readonly #thinkingType: "enabled" | "disabled" | undefined;
+    readonly #reasoningEffort: "low" | "high" | "max" | undefined;
     readonly #fetch: ProviderFetch;
 
     constructor(options: OpenAICompatibleProviderOptions) {
@@ -506,6 +569,21 @@ export class OpenAICompatibleProvider implements ModelAdapter {
             throw new TypeError("topP must be between 0 and 1");
         }
         if (
+            options.thinkingType !== undefined &&
+            options.thinkingType !== "enabled" &&
+            options.thinkingType !== "disabled"
+        ) {
+            throw new TypeError("thinkingType must be enabled or disabled");
+        }
+        if (
+            options.reasoningEffort !== undefined &&
+            options.reasoningEffort !== "low" &&
+            options.reasoningEffort !== "high" &&
+            options.reasoningEffort !== "max"
+        ) {
+            throw new TypeError("reasoningEffort must be low, high, or max");
+        }
+        if (
             options.baseUrl !== undefined &&
             options.baseURL !== undefined &&
             options.baseUrl !== options.baseURL
@@ -522,6 +600,8 @@ export class OpenAICompatibleProvider implements ModelAdapter {
           this.#model = options.model;
           this.#temperature = options.temperature;
           this.#topP = options.topP;
+          this.#thinkingType = options.thinkingType;
+          this.#reasoningEffort = options.reasoningEffort;
           this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
           this.descriptor = {
             provider: options.providerName ?? "openai-compatible",
@@ -554,6 +634,8 @@ export class OpenAICompatibleProvider implements ModelAdapter {
                         this.#model,
                         this.#temperature,
                         this.#topP,
+                        this.#thinkingType,
+                        this.#reasoningEffort,
                         stream
                     )
                 ),
@@ -609,6 +691,7 @@ export class OpenAICompatibleProvider implements ModelAdapter {
         }
 
         let text = "";
+        let reasoningContent: string | undefined;
         let usage: TokenUsage | undefined;
         let completed = false;
         const pending = new Map<number, PendingToolCall>();
@@ -647,6 +730,13 @@ export class OpenAICompatibleProvider implements ModelAdapter {
                 text += delta;
                 yield { type: "text.delta", delta };
             }
+            const reasoningDelta = parseReasoningContent(
+              choice.delta.reasoning_content,
+              "stream"
+            );
+            if (reasoningDelta !== undefined) {
+              reasoningContent = (reasoningContent ?? "") + reasoningDelta;
+            }
             appendToolCallDeltas(choice.delta.tool_calls, pending);
         }
 
@@ -656,14 +746,15 @@ export class OpenAICompatibleProvider implements ModelAdapter {
         }
         yield {
             type: "response.completed",
-            response: sealStreamResponse(text, pending, usage)
+            response: sealStreamResponse(
+              text,
+              reasoningContent,
+              pending,
+              usage
+            )
         };
     }
 }
-
-
-
-
 
 
 
