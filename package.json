@@ -2,7 +2,7 @@
   "name": "codel",
   "version": "0.1.0",
   "private": true,
-  "description": "Week 1 reference implementation of a deterministic coding-agent runtime skeleton.",
+  "description": "A TypeScript coding-agent CLI with repository tools and resumable JSONL sessions.",
   "type": "module",
   "packageManager": "pnpm@10.25.0",
   "engines": {
