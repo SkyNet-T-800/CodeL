@@ -1,17 +1,16 @@
 {
-  "name": "@repo-circuit/cli",
+  "name": "@codel/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "repo-circuit": "./bin/repo-circuit.mjs"
+    "codel": "./bin/codel.mjs"
   },
   "files": ["bin", "dist"],
   "dependencies": {
     "@repo-circuit/core": "workspace:*",
-    "@repo-circuit/harness": "workspace:*",
     "@repo-circuit/providers": "workspace:*",
-    "@repo-circuit/tools": "workspace:*",
-    "@repo-circuit/trace": "workspace:*"
+    "@repo-circuit/session": "workspace:*",
+    "@repo-circuit/tools": "workspace:*"
   }
 }

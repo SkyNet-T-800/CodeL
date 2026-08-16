@@ -1,6 +1,7 @@
 import type {
     AgentError,
     AgentEvent,
+    AgentResumeState,
     EventSink,
     ModelAdapter,
     ModelResponse,
@@ -11,8 +12,7 @@ import type {
     TaskSpec,
     TerminalAgentState,
     TokenUsage,
-    ToolExecutionResult,
-    Verifier
+    ToolExecutionResult
 } from "./contracts.js"
 
 const DEFAULT_TOKEN_BUDGET = 100_000;
@@ -26,10 +26,10 @@ export interface RunAgentOptions {
     readonly provider: ModelAdapter;
     readonly tools: readonly RegisteredTool[];
     readonly events: EventSink;
-    readonly verifier?: Verifier;
     readonly signal?: AbortSignal;
     readonly systemPrompt?: string;
     readonly budget?: Partial<RunBudget>;
+    readonly resumeState?: AgentResumeState;
 }
 
 class LoopFailure extends Error {
@@ -120,7 +120,8 @@ function validateUsage(usage: TokenUsage): void {
     usage.inputTokens < 0 ||
     usage.outputTokens < 0 ||
     usage.totalTokens < 0 ||
-    usage.totalTokens !== usage.inputTokens + usage.outputTokens
+    usage.totalTokens !== usage.inputTokens + usage.outputTokens ||
+    typeof usage.complete !== "boolean"
   ) {
     throw loopFailure(
       "PROVIDER_PROTOCOL_ERROR",
@@ -161,7 +162,10 @@ async function appendBeforeDeadline(
     signal: AbortSignal
 ): Promise<void> {
     signal.throwIfAborted();
-    await abortable(events.append(event, signal), signal);
+    // Once an append begins, await the sink's definitive outcome. Racing the
+    // durable write against AbortSignal can commit an event without advancing
+    // the Runtime sequence cursor.
+    await events.append(event, signal);
 }
 
 async function collectProviderResponse(
@@ -240,7 +244,7 @@ function interruptedError(
 
 
 export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentState> {
-    const { runId, task, workspaceRoot, provider, tools, events, verifier } = options;
+    const { runId, task, workspaceRoot, provider, tools, events } = options;
     const budget = resolveRunBudget(task, options.budget);
     const timeoutSignal = AbortSignal.timeout(budget.wallClockBudgetMs);
     const signal = AbortSignal.any(
@@ -251,16 +255,17 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
 
     let seq = 0;
     let stepOpen = false;
+    const resumeState = options.resumeState;
     let state: RunningAgentState = {
         runId,
         task,
-        step: 0,
-        messages: [{ role: "user", content: task.instruction }],
+        step: resumeState?.lastCompletedStep ?? 0,
+        messages:
+          resumeState?.messages ?? [{ role: "user", content: task.instruction }],
         status: "running",
-        usage: emptyUsage(true),
-        toolCallCount: 0,
-        terminalReason: "running",
-        verification: undefined
+        usage: resumeState?.usage ?? emptyUsage(true),
+        toolCallCount: resumeState?.toolCallCount ?? 0,
+        terminalReason: "running"
     };
 
     const nextEnvelope = () => ({
@@ -281,6 +286,25 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
         seq = event.seq;
     };
 
+    const recordIncompleteUsage = async (step: number): Promise<void> => {
+        const cumulative: TokenUsage = {
+            ...state.usage,
+            complete: false
+        };
+        state = { ...state, usage: cumulative };
+        // The Provider attempt already happened, so persist unknown accounting
+        // even when the Run's deadline signal has fired.
+        await appendEvent({
+            ...nextEnvelope(),
+            type: "usage.recorded",
+            data: {
+                step,
+                usage: emptyUsage(false),
+                cumulative
+            }
+        });
+    };
+
     const toolsByName = new Map(
         tools.map((tool) => [tool.definition.name, tool])
     );
@@ -291,7 +315,7 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
         )
         .map((tool) => tool.definition);
     
-    const seenCallIds = new Set<string>();
+    const seenCallIds = new Set<string>(resumeState?.seenCallIds ?? []);
 
     try {
         await appendEvent(
@@ -306,7 +330,11 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
             signal
         );
 
-        for (let step = 1; step <= budget.maxSteps; step += 1) {
+        for (
+            let step = state.step + 1;
+            step <= budget.maxSteps;
+            step += 1
+        ) {
             signal.throwIfAborted();
             if (state.usage.totalTokens >= budget.tokenBudget) {
                 throw loopFailure(
@@ -362,13 +390,7 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                     }
                 );
             } catch (error) {
-                state = {
-                    ...state,
-                    usage: {
-                        ...state.usage,
-                        complete: false
-                    }
-                };
+                await recordIncompleteUsage(step);
                 if (signal.aborted) {
                     throw error;
                 }
@@ -383,7 +405,12 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
             }
 
             if (response.usage !== undefined) {
-                validateUsage(response.usage);
+                try {
+                    validateUsage(response.usage);
+                } catch (error) {
+                    await recordIncompleteUsage(step);
+                    throw error;
+                }
                 const cumulative = addUsage(state.usage, response.usage);
                 state = { ...state, usage: cumulative };
                 await appendEvent(
@@ -396,16 +423,9 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                             cumulative
                         }
                     },
-                    signal
                 );
             } else {
-                state = {
-                    ...state,
-                    usage: {
-                        ...state.usage,
-                        complete: false
-                    }
-                };
+                await recordIncompleteUsage(step);
             }
 
             if (response.kind === "end_turn") {
@@ -431,120 +451,26 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                     signal
                 );
 
-                if (verifier === undefined) {
-                    await appendEvent(
-                        {
-                            ...nextEnvelope(),
-                            type: "step.end",
-                            data: { step, reason: "end_turn" }
-                        },
-                        signal
-                    );
-                    stepOpen = false;
-                    await appendEvent({
-                        ...nextEnvelope(),
-                        type: "run.end",
-                        data: { status: "completed", steps: step }
-                    });
-                    return {
-                        ...state,
-                        status: "completed",
-                        terminalReason: "end_turn",
-                        finalOutput: response.text
-                    };
-                }
-
-                signal.throwIfAborted();
-                await appendEvent(
-                    {
-                        ...nextEnvelope(),
-                        type: "verify.begin",
-                        data: {
-                            step,
-                            verifierVersion: verifier.version
-                        }
-                    },
-                    signal
-                );
-
-                let verification;
-                try {
-                    verification = await verifier.verify({
-                        task,
-                        workspaceRoot,
-                        signal
-                    });
-                } catch(error) {
-                    if (signal.aborted) {
-                        throw error;
-                    }
-                    throw loopFailure(
-                        "VERIFIER_FAILED",
-                        errorMessage(error),
-                        "verifier"
-                    );
-                }
-
-                state = {
-                    ...state,
-                    verification,
-                    messages: [
-                        ...state.messages,
-                        {
-                            role: "verifier",
-                            result: verification
-                        }
-                    ]
-                };
-                await appendEvent(
-                    {
-                        ...nextEnvelope(),
-                        type: "verify.result",
-                        data: {
-                            step,
-                            result: verification
-                        }
-                    },
-                    signal
-                );
-
-                if (verification.passed) {
-                    await appendEvent(
-                        {
-                            ...nextEnvelope(),
-                            type: "step.end",
-                            data: { step, reason: "end_turn" }
-                        },
-                        signal
-                    );
-                    stepOpen = false;
-                    await appendEvent({
-                        ...nextEnvelope(),
-                        type: "run.end",
-                        data: {
-                            status: "completed",
-                            steps: step,
-                            terminalReason: "verified"
-                        }
-                    });
-                    return {
-                        ...state,
-                        status: "completed",
-                        terminalReason: "verified",
-                        finalOutput: response.text
-                    };
-                }
-
                 await appendEvent(
                     {
                         ...nextEnvelope(),
                         type: "step.end",
-                        data: { step, reason: "verification_failed" }
+                        data: { step, reason: "end_turn" }
                     },
                     signal
                 );
                 stepOpen = false;
-                continue;
+                await appendEvent({
+                    ...nextEnvelope(),
+                    type: "run.end",
+                    data: { status: "completed", steps: step }
+                });
+                return {
+                    ...state,
+                    status: "completed",
+                    terminalReason: "end_turn",
+                    finalOutput: response.text
+                };
             }
 
             if (response.calls.length === 0) {
@@ -552,6 +478,23 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                     "INVALID_PROVIDER_RESPONSE",
                     "tool_use must contain at least one tool call",
                     "provider"
+                );
+            }
+
+            if (
+                state.toolCallCount + response.calls.length > budget.maxToolCalls
+            ) {
+                throw loopFailure(
+                    "TOOL_CALL_BUDGET_EXHAUSTED",
+                    `Run cannot accept a ${response.calls.length}-call Tool batch with only ${
+                        budget.maxToolCalls - state.toolCallCount
+                    } calls remaining`,
+                    "loop",
+                    {
+                        maxToolCalls: budget.maxToolCalls,
+                        toolCallCount: state.toolCallCount,
+                        requestedToolCalls: response.calls.length
+                    }
                 );
             }
 
@@ -712,6 +655,8 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                 ...nextEnvelope(),
                 type: "turn.interrupted",
                 data: {
+                    taskId: task.id,
+                    instruction: task.instruction,
                     steps: state.step,
                     error: agentError
                 }

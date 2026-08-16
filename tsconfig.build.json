@@ -2,10 +2,9 @@
   "files": [],
   "references": [
     { "path": "./packages/core" },
-    { "path": "./packages/harness" },
+    { "path": "./packages/session" },
     { "path": "./packages/providers" },
     { "path": "./packages/tools" },
-    { "path": "./packages/trace" },
     { "path": "./apps/cli" }
   ]
 }

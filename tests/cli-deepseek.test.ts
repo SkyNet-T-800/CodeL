@@ -16,7 +16,7 @@ const temporaryRoots: string[] = [];
 interface CliFixture {
   readonly taskPath: string;
   readonly workspaceRoot: string;
-  readonly runsRoot: string;
+  readonly sessionsRoot: string;
 }
 
 async function createCliFixture(): Promise<CliFixture> {
@@ -24,7 +24,7 @@ async function createCliFixture(): Promise<CliFixture> {
   temporaryRoots.push(root);
   const taskRoot = join(root, "task");
   const workspaceRoot = join(root, "workspace");
-  const runsRoot = join(root, "runs");
+  const sessionsRoot = join(root, "sessions");
   await Promise.all([mkdir(taskRoot), mkdir(workspaceRoot)]);
   await writeFile(join(workspaceRoot, "README.md"), "# Fixture\n", "utf8");
   await writeFile(
@@ -49,16 +49,10 @@ async function createCliFixture(): Promise<CliFixture> {
     )}\n`,
     "utf8"
   );
-  await writeFile(
-    join(taskRoot, "verifier.mjs"),
-    "process.stdout.write('fixture verified');\n",
-    "utf8"
-  );
-
   await execFileAsync("git", ["init", "--quiet"], { cwd: workspaceRoot });
   await execFileAsync(
     "git",
-    ["config", "user.name", "RepoCircuit CLI Test"],
+    ["config", "user.name", "CodeL CLI Test"],
     { cwd: workspaceRoot }
   );
   await execFileAsync(
@@ -77,7 +71,7 @@ async function createCliFixture(): Promise<CliFixture> {
   return {
     taskPath: join(taskRoot, "task.json"),
     workspaceRoot,
-    runsRoot
+    sessionsRoot
   };
 }
 
@@ -135,8 +129,10 @@ async function runCli(
     fixture.workspaceRoot,
     "--provider",
     "deepseek",
-    "--runs-dir",
-    fixture.runsRoot,
+    "--sessions-dir",
+    fixture.sessionsRoot,
+    "--session-id",
+    runId,
     "--run-id",
     runId,
     ...(options.maxSteps === undefined
@@ -206,7 +202,7 @@ describe("DeepSeek CLI provider", () => {
       const { stdout } = await runCli(fixture, runId, environment, {
         maxSteps: 8
       });
-      expect(stdout).toContain(`✓ ${runId}: verified`);
+      expect(stdout).toContain(`✓ ${runId}: end_turn`);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));
@@ -227,19 +223,6 @@ describe("DeepSeek CLI provider", () => {
       expect.arrayContaining([
         expect.objectContaining({
           function: expect.objectContaining({
-            name: "exec",
-            description: expect.stringContaining(
-              "Run the deterministic public smoke tests"
-            ),
-            parameters: {
-              type: "object",
-              properties: {},
-              additionalProperties: false
-            }
-          })
-        }),
-        expect.objectContaining({
-          function: expect.objectContaining({
             name: "apply_patch",
             parameters: expect.objectContaining({
               properties: expect.objectContaining({
@@ -254,23 +237,19 @@ describe("DeepSeek CLI provider", () => {
         })
       ])
     );
+    expect(requestBody?.tools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          function: expect.objectContaining({ name: "exec" })
+        })
+      ])
+    );
 
-    const runMeta = JSON.parse(
-      await readFile(join(fixture.runsRoot, runId, "run-meta.json"), "utf8")
-    ) as Record<string, unknown>;
-    const runConfig = JSON.parse(
-      await readFile(join(fixture.runsRoot, runId, "run-config.json"), "utf8")
-    ) as Record<string, unknown>;
-    expect(runMeta.model).toMatchObject({
-      provider: "deepseek",
-      modelId: "deepseek-v4-flash",
-      modelRevision: "unknown",
-      reasoningEffort: "high",
-      temperature: "unsupported",
-      topP: "unsupported"
-    });
-    expect(runMeta.budget).toMatchObject({ maxSteps: 8 });
-    expect(runConfig.budget).toEqual(runMeta.budget);
+    const transcript = await readFile(
+      join(fixture.sessionsRoot, `${runId}.jsonl`),
+      "utf8"
+    );
+    expect(transcript).toContain('"type":"run.end"');
   });
 
   it("records disabled thinking and accepts the generic key fallback", async () => {
@@ -318,15 +297,11 @@ describe("DeepSeek CLI provider", () => {
     expect(requestBody).not.toHaveProperty("reasoning_effort");
     expect(requestBody).not.toHaveProperty("temperature");
     expect(requestBody).not.toHaveProperty("top_p");
-    const runMeta = JSON.parse(
-      await readFile(join(fixture.runsRoot, runId, "run-meta.json"), "utf8")
-    ) as Record<string, unknown>;
-    expect(runMeta.model).toMatchObject({
-      provider: "deepseek",
-      reasoningEffort: "disabled",
-      temperature: 1,
-      topP: 1
-    });
+    const transcript = await readFile(
+      join(fixture.sessionsRoot, `${runId}.jsonl`),
+      "utf8"
+    );
+    expect(transcript).toContain('"type":"run.end"');
   });
 
   it("rejects reasoning effort while thinking is disabled", async () => {

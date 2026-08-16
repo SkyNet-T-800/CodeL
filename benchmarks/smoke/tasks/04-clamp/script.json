@@ -22,15 +22,8 @@
     "usage": { "inputTokens": 220, "outputTokens": 82, "totalTokens": 302, "complete": true }
   },
   {
-    "kind": "tool_use",
-    "calls": [
-      { "id": "04-test", "name": "exec", "input": {} }
-    ],
-    "usage": { "inputTokens": 270, "outputTokens": 20, "totalTokens": 290, "complete": true }
-  },
-  {
     "kind": "end_turn",
-    "text": "Implemented inclusive clamping and invalid-bound validation; tests pass.",
+    "text": "Implemented inclusive clamping and invalid-bound validation.",
     "usage": { "inputTokens": 300, "outputTokens": 26, "totalTokens": 326, "complete": true }
   }
 ]

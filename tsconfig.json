@@ -6,9 +6,8 @@
     "paths": {
       "@repo-circuit/core": ["packages/core/src/index.ts"],
       "@repo-circuit/providers": ["packages/providers/src/index.ts"],
-      "@repo-circuit/harness": ["packages/harness/src/index.ts"],
-      "@repo-circuit/tools": ["packages/tools/src/index.ts"],
-      "@repo-circuit/trace": ["packages/trace/src/index.ts"]
+      "@repo-circuit/session": ["packages/session/src/index.ts"],
+      "@repo-circuit/tools": ["packages/tools/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]
   },

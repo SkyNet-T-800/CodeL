@@ -22,15 +22,8 @@
     "usage": { "inputTokens": 190, "outputTokens": 45, "totalTokens": 235, "complete": true }
   },
   {
-    "kind": "tool_use",
-    "calls": [
-      { "id": "02-test", "name": "exec", "input": {} }
-    ],
-    "usage": { "inputTokens": 230, "outputTokens": 20, "totalTokens": 250, "complete": true }
-  },
-  {
     "kind": "end_turn",
-    "text": "Corrected add to use addition and verified all smoke cases.",
+    "text": "Corrected add to use addition.",
     "usage": { "inputTokens": 260, "outputTokens": 22, "totalTokens": 282, "complete": true }
   }
 ]

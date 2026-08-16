@@ -1,5 +1,5 @@
 {
-  "name": "repo-circuit",
+  "name": "codel",
   "version": "0.1.0",
   "private": true,
   "description": "Week 1 reference implementation of a deterministic coding-agent runtime skeleton.",
@@ -14,16 +14,14 @@
     "dev": "tsx apps/cli/src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "smoke:w1": "pnpm build && pnpm exec repo-circuit run --task fixtures/hello-repo/task.json --trace .traces/fixture-run.jsonl --run-id fixture-readme-run",
+    "smoke:w1": "pnpm build && pnpm exec codel run --task fixtures/hello-repo/task.json --sessions-dir .sessions --session-id fixture-readme-run --run-id fixture-readme-run",
     "smoke:w3": "pnpm build && node scripts/run-w3-smoke.mjs --provider scripted",
     "smoke:w3:real": "pnpm build && node scripts/run-w3-smoke.mjs --provider openai",
     "smoke:w3:deepseek": "pnpm build && node scripts/run-w3-smoke.mjs --provider deepseek --max-steps 8",
-    "smoke:w3:check": "pnpm build && node scripts/check-w3-runs.mjs runs",
-    "trace:check": "node scripts/check-trace.mjs .traces/fixture-run.jsonl fixtures/hello-repo/expected/trace.jsonl fixtures/hello-repo/expected/final-result.json",
-    "verify": "pnpm typecheck && pnpm test && pnpm smoke:w3"
+    "verify": "pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
-    "@repo-circuit/cli": "workspace:*",
+    "@codel/cli": "workspace:*",
     "@types/node": "22.20.1",
     "tsx": "4.23.1",
     "typescript": "5.9.3",

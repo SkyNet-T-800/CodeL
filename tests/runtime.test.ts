@@ -6,9 +6,7 @@ import {
     type ModelAdapter,
     type ModelResponse,
     type ProviderRequest,
-    type TaskSpec,
-    type VerificationResult,
-    type Verifier
+    type TaskSpec
 } from "@repo-circuit/core";
 import { describe, expect, it } from "vitest";
 
@@ -40,34 +38,6 @@ class QueueProvider implements ModelAdapter {
             }
             return response;
         }
-}
-
-const passedVerification: VerificationResult = {
-    passed: true,
-    summary: "deterministic checks passed",
-    testResult: {
-        status: "passed",
-        exitCode: 0,
-        summary: "ok",
-        durationMs: 0
-    }
-};
-
-class FixedVerifier implements Verifier {
-    readonly version = "test-verifier-v1";
-    readonly #results: VerificationResult[];
-
-    constructor(results: readonly VerificationResult[] = [passedVerification]) {
-        this.#results = [...results];
-    }
-
-    async verify(): Promise<VerificationResult> {
-        const result = this.#results.shift();
-        if (result === undefined) {
-            throw new Error("verification queue exhausted");
-        }
-        return result;
-    }
 }
 
 function task(overrrides: Partial<TaskSpec["budget"]> = {}): TaskSpec {
@@ -127,7 +97,6 @@ async function execute(
     provider: ModelAdapter,
     options: {
         readonly task?: TaskSpec;
-        readonly verifier?: Verifier;
         readonly signal?: AbortSignal;
         readonly counter?: { value: number };
     } = {}
@@ -141,14 +110,13 @@ async function execute(
         provider,
         tools: [echoTool(counter)],
         events: sink,
-        verifier: options.verifier ?? new FixedVerifier(),
         ...(options.signal === undefined ? {} : { signal: options.signal })
     });
     return { counter, sink, state };
 }
 
 describe("W3 agent loop", () => {
-    it("records Usage before Tool, observes the result, then verifies", async () => {
+    it("records Usage before Tool, observes the result, then completes", async () => {
         const provider = new QueueProvider([
             {
                 kind: "tool_use",
@@ -165,27 +133,16 @@ describe("W3 agent loop", () => {
         const { counter, sink, state } = await execute(provider);
 
         expect(state.status).toBe("completed");
-        expect(state.terminalReason).toBe("verified");
+        expect(state.terminalReason).toBe("end_turn");
         expect(counter.value).toBe(1);
         const types = sink.events.map((event) => event.type);
         expect(types.indexOf("usage.recorded")).toBeLessThan(
             types.indexOf("tool.call")
         );
-        expect(types).toContain("verify.result");
         expect(types.at(-1)).toBe("run.end");
     });
 
     it("preserves reasoning content in subsequent Provider requests", async () => {
-        const failed: VerificationResult = {
-            passed: false,
-            summary: "try again",
-            testResult: {
-                status: "failed",
-                exitCode: 1,
-                summary: "not yet",
-                durationMs: 0
-            }
-        };
         const toolCall = {
             id: "reasoning-call",
             name: "echo",
@@ -202,19 +159,12 @@ describe("W3 agent loop", () => {
             {
                 kind: "end_turn",
                 text: "first answer",
-                reasoningContent: "The first result may need verification.",
-                usage: usage()
-            },
-            {
-                kind: "end_turn",
-                text: "corrected answer",
+                reasoningContent: "The tool result is sufficient.",
                 usage: usage()
             }
         ]);
 
-        const { state } = await execute(provider, {
-            verifier: new FixedVerifier([failed, passedVerification])
-        });
+        const { state } = await execute(provider);
 
         expect(state.status).toBe("completed");
         expect(provider.requests[1]?.messages).toContainEqual({
@@ -222,11 +172,6 @@ describe("W3 agent loop", () => {
             content: "I will inspect with the tool.",
             toolCalls: [toolCall],
             reasoningContent: "I should inspect with the echo tool."
-        });
-        expect(provider.requests[2]?.messages).toContainEqual({
-            role: "assistant",
-            content: "first answer",
-            reasoningContent: "The first result may need verification."
         });
     });
 
@@ -333,7 +278,7 @@ describe("W3 agent loop", () => {
     ).toHaveLength(1);
   });
 
-  it("stops before executing a Tool beyond maxToolCalls", async () => {
+  it("rejects an over-budget Tool batch before executing any call", async () => {
     const counter = { value: 0 };
     const { state } = await execute(
       new QueueProvider([
@@ -352,9 +297,10 @@ describe("W3 agent loop", () => {
       }
     );
 
-    expect(counter.value).toBe(1);
+    expect(counter.value).toBe(0);
     expect(state).toMatchObject({
       status: "failed",
+      toolCallCount: 0,
       error: { code: "TOOL_CALL_BUDGET_EXHAUSTED" }
     });
   });
@@ -383,36 +329,6 @@ describe("W3 agent loop", () => {
     expect(
       sink.events.filter((event) => event.type === "turn.interrupted")
     ).toHaveLength(1);
-  });
-
-  it("feeds deterministic verifier failure back into the next Step", async () => {
-    const failed: VerificationResult = {
-      passed: false,
-      summary: "expected value 3",
-      testResult: {
-        status: "failed",
-        exitCode: 1,
-        summary: "assertion failed",
-        durationMs: 0
-      }
-    };
-    const { sink, state } = await execute(
-      new QueueProvider([
-        { kind: "end_turn", text: "first answer", usage: usage() },
-        { kind: "end_turn", text: "corrected answer", usage: usage() }
-      ]),
-      { verifier: new FixedVerifier([failed, passedVerification]) }
-    );
-
-    expect(state.status).toBe("completed");
-    expect(
-      sink.events.filter((event) => event.type === "verify.result")
-    ).toHaveLength(2);
-    expect(
-      sink.events
-        .filter((event) => event.type === "step.end")
-        .map((event) => event.data.reason)
-    ).toEqual(["verification_failed", "end_turn"]);
   });
 
   it("commits exactly one interrupted terminal and no synthetic step.end", async () => {
@@ -526,7 +442,6 @@ describe("W3 agent loop", () => {
       ]),
       tools: [slowTool],
       events: sink,
-      verifier: new FixedVerifier(),
       signal: controller.signal
     });
     let runSettled = false;

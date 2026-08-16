@@ -37,7 +37,7 @@ describe("controlled exec tool", () => {
     const tool = registration([
       {
         id: "test",
-        description: "Run the deterministic task verifier",
+        description: "Run the public test command",
         command: process.execPath,
         args: ["-e", ""]
       }
@@ -50,7 +50,7 @@ describe("controlled exec tool", () => {
       additionalProperties: false
     });
     expect(tool.definition.description).toContain(
-      "Run the deterministic task verifier"
+      "Run the public test command"
     );
   });
 

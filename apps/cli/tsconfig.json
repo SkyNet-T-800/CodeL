@@ -9,9 +9,8 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../../packages/core" },
-    { "path": "../../packages/harness" },
     { "path": "../../packages/providers" },
-    { "path": "../../packages/tools" },
-    { "path": "../../packages/trace" }
+    { "path": "../../packages/session" },
+    { "path": "../../packages/tools" }
   ]
 }

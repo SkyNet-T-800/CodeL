@@ -22,15 +22,8 @@
     "usage": { "inputTokens": 210, "outputTokens": 68, "totalTokens": 278, "complete": true }
   },
   {
-    "kind": "tool_use",
-    "calls": [
-      { "id": "03-test", "name": "exec", "input": {} }
-    ],
-    "usage": { "inputTokens": 250, "outputTokens": 20, "totalTokens": 270, "complete": true }
-  },
-  {
     "kind": "end_turn",
-    "text": "Normalized names, added the stranger fallback, and verified tests.",
+    "text": "Normalized names and added the stranger fallback.",
     "usage": { "inputTokens": 280, "outputTokens": 24, "totalTokens": 304, "complete": true }
   }
 ]

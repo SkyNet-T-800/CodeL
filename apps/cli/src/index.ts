@@ -1,21 +1,15 @@
-import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
-  realpath,
   readFile,
-  stat,
-  writeFile
+  stat
 } from "node:fs/promises";
 import {
-  basename,
   dirname,
   isAbsolute,
   relative,
   resolve,
   sep
 } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import {
   parseTaskSpec,
@@ -23,66 +17,51 @@ import {
   type JsonObject,
   type ModelAdapter,
   type ModelResponse,
-  type RunOutcome,
-  type TaskSpec,
-  type TestResult,
-  type VerificationResult,
+  type TaskSpec
 } from "@repo-circuit/core";
-import {
-  CommandVerifier,
-  evaluateBaselineEligibility,
-  validateComparison,
-  validateRunDirectory,
-  type RunDirectoryValidationResult
-} from "@repo-circuit/harness";
 import {
   OpenAICompatibleProvider,
   ScriptedMockProvider
 } from "@repo-circuit/providers";
-
 import {
-  createWeekTwoToolRegistrations
-} from "@repo-circuit/tools";
+  forkSession,
+  inspectSession,
+  listSessions,
+  SessionEventSink,
+  SessionStore
+} from "@repo-circuit/session";
 
-import {
-  RunRecorder,
-  sha256Text
-} from "@repo-circuit/trace";
+import { weekTwoToolRegistrations } from "@repo-circuit/tools";
 
-import {
-  createRunConfiguration,
-  type ModelRunSettings
-} from "./run-config.js"
 import { W3_SYSTEM_PROMPT } from "./system-prompt.js";
-
-const execFileAsync = promisify(execFile);
-const implementationRoot = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../.."
-);
 
 interface RunArguments {
   readonly taskPath: string;
-  readonly runsDir: string;
   readonly runId: string | undefined;
   readonly provider: "scripted" | "openai" | "deepseek";
   readonly scriptPath: string | undefined;
   readonly workspacePath: string | undefined;
-  readonly comparisonId: string | null;
-  readonly attemptIndex: number;
   readonly maxSteps: number | undefined;
+  readonly sessionsDir: string;
+  readonly sessionId: string | undefined;
+  readonly resumeSessionId: string | undefined;
+  readonly atStep: number | undefined;
 }
 
 function usage(): string {
   return [
     "Usage:",
-    "  repo-circuit run --task <task.json> [--provider scripted|openai|deepseek]",
-    "    [--runs-dir <runs>] [--run-id <id>] [--workspace <copied-workspace>]",
-    "    [--script <script.json>] [--comparison-id <id>] [--attempt-index <n>]",
+    "  codel run --task <task.json> [--provider scripted|openai|deepseek]",
+    "    [--run-id <id>] [--workspace <copied-workspace>]",
+    "    [--script <script.json>]",
     "    [--max-steps <positive-integer>]",
-    "  repo-circuit compare --a <run-meta.json> --b <run-meta.json>",
-    "    [--output <manifest.json>] [--meta-only]",
-    "  repo-circuit baseline-check --meta <run-meta.json>",
+    "    [--sessions-dir <sessions>] [--session-id <id>]",
+    "    [--resume-session <id> [--at-step <completed-step>]]",
+    "  codel session list [--sessions-dir <sessions>]",
+    "  codel session show|resume --session-id <id> [--sessions-dir <sessions>]",
+    "  codel session rewind --session-id <id> --at-step <n>",
+    "  codel session fork --session-id <id> [--at-step <n>]",
+    "    [--child-session-id <id>] [--sessions-dir <sessions>]",
     "",
     "Real Provider environment:",
     "  openai: REPO_CIRCUIT_API_KEY, REPO_CIRCUIT_BASE_URL, REPO_CIRCUIT_MODEL",
@@ -122,14 +101,6 @@ function requiredValue(args: readonly string[], flag: string): string {
   return value;
 }
 
-function nonNegativeInteger(value: string, flag: string): number {
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`${flag} must be a non-negative integer`);
-  }
-  return parsed;
-}
-
 function positiveInteger(value: string, flag: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
@@ -138,9 +109,27 @@ function positiveInteger(value: string, flag: string): number {
   return parsed;
 }
 
+function nonNegativeInteger(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${flag} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function optionalStep(args: readonly string[]): number | undefined {
+  const raw = valueAfter(args, "--at-step");
+  return raw === undefined
+    ? undefined
+    : nonNegativeInteger(raw, "--at-step");
+}
+
 function parseRunArguments(args: readonly string[]): RunArguments {
   const provider = valueAfter(args, "--provider") ?? "scripted";
   const maxSteps = valueAfter(args, "--max-steps");
+  const sessionId = valueAfter(args, "--session-id");
+  const resumeSessionId = valueAfter(args, "--resume-session");
+  const atStep = optionalStep(args);
   if (
     provider !== "scripted" &&
     provider !== "openai" &&
@@ -148,22 +137,26 @@ function parseRunArguments(args: readonly string[]): RunArguments {
   ) {
     throw new Error(`--provider must be scripted, openai, or deepseek`);
   }
+  if (sessionId !== undefined && resumeSessionId !== undefined) {
+    throw new Error("--session-id and --resume-session are mutually exclusive");
+  }
+  if (atStep !== undefined && resumeSessionId === undefined) {
+    throw new Error("--at-step requires --resume-session");
+  }
   return {
     taskPath: requiredValue(args, "--task"),
-    runsDir: valueAfter(args, "--runs-dir") ?? "runs",
     runId: valueAfter(args, "--run-id"),
     provider,
     scriptPath: valueAfter(args, "--script"),
     workspacePath: valueAfter(args, "--workspace"),
-    comparisonId: valueAfter(args, "--comparison-id") ?? null,
-    attemptIndex: nonNegativeInteger(
-      valueAfter(args, "--attempt-index") ?? "0",
-      "--attempt-index"
-    ),
     maxSteps:
       maxSteps === undefined
         ? undefined
-        : positiveInteger(maxSteps, "--max-steps")
+        : positiveInteger(maxSteps, "--max-steps"),
+    sessionsDir: valueAfter(args, "--sessions-dir") ?? "sessions",
+    sessionId,
+    resumeSessionId,
+    atStep
   };
 }
 
@@ -349,24 +342,13 @@ function deepSeekApiKey(): string {
 async function createProvider(
   args: RunArguments,
   taskDirectory: string
-): Promise<{
-  readonly provider: ModelAdapter;
-  readonly modelSettings: ModelRunSettings;
-}> {
+): Promise<ModelAdapter> {
   if (args.provider === "scripted") {
     const scriptPath = resolve(
       args.scriptPath ?? resolve(taskDirectory, "script.json")
     );
     const raw: unknown = JSON.parse(await readFile(scriptPath, "utf-8"));
-    return {
-      provider: new ScriptedMockProvider(parseScript(raw)),
-      modelSettings: {
-        reasoningEffort: "unsupported",
-        temperature: "unsupported",
-        topP: "unsupported",
-        seed: "unsupported"
-      }
-    }
+    return new ScriptedMockProvider(parseScript(raw));
   }
 
   const realProvider = args.provider;
@@ -424,8 +406,7 @@ async function createProvider(
     throw new Error("REPO_CIRCUIT_MODEL is required for --provider openai");
   }
 
-  return {
-    provider: new OpenAICompatibleProvider({
+  return new OpenAICompatibleProvider({
       apiKey,
       baseUrl,
       model,
@@ -441,125 +422,7 @@ async function createProvider(
       ...(isDeepSeek ? {} : { topP: 1 }),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       ...(thinkingType === undefined ? {} : { thinkingType })
-    }),
-    modelSettings: {
-      reasoningEffort:
-        thinkingType === "disabled"
-          ? "disabled"
-          : (reasoningEffort ?? (isDeepSeek ? "unknown" : "unsupported")),
-      temperature: isDeepSeek
-        ? thinkingType === "enabled"
-          ? "unsupported"
-          : (temperature ?? 1)
-        : (temperature ?? 0),
-      topP: isDeepSeek
-        ? thinkingType === "enabled"
-          ? "unsupported"
-          : 1
-        : "unsupported",
-      seed: "unsupported"
-    }
-  }
-}
-
-interface WorkspaceIdentity {
-  readonly baseSha: string;
-  readonly repositoryRoot: string;
-}
-
-async function inspectCleanWorkspace(
-  workspaceRoot: string,
-  declaredBaseSha: string | undefined
-): Promise<WorkspaceIdentity> {
-  const physicalWorkspace = await realpath(workspaceRoot);
-  const [{ stdout: topLevelOutput }, { stdout: baseShaOutput }] =
-    await Promise.all(
-      [
-        execFileAsync("git", ["rev-parse", "--show-toplevel"], {
-          cwd: workspaceRoot,
-          encoding: "utf8",
-          timeout: 10_000,
-          maxBuffer: 64 * 1024
-        }),
-        execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
-          cwd: workspaceRoot,
-          encoding: "utf8",
-          timeout: 10_000,
-          maxBuffer: 64 * 1024
-        })
-      ]
-    );
-  const repositoryRoot = await realpath(topLevelOutput.trim());
-  if (physicalWorkspace !== repositoryRoot) {
-    throw new Error(
-      "Run workspace must be the Git repository root so Patch scope is unambiguous"
-    )
-  }  
-
-  const { stdout: status } = await execFileAsync(
-    "git",
-    ["status", "--porcelain=v1", "--untracked-files=all"],
-    {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-      timeout: 10_000,
-      maxBuffer: 2 * 1024 * 1024
-    }
-  );
-  if (status.trim().length > 0) {
-    throw new Error(
-      "Run workspace must be clean before configuration is frozen"
-    );
-  }
-
-  const baseSha = baseShaOutput.trim();
-
-  if (baseSha.length === 0) {
-    throw new Error("Run workspace HEAD is empty");
-  }
-  if (declaredBaseSha !== undefined && declaredBaseSha !== baseSha) {
-    throw new Error(
-      `Task attribution.baseSha does not match workspace HEAD: expected ${declaredBaseSha}, received ${baseSha}`
-    );
-  }
-  return { baseSha, repositoryRoot };
-}
-
-async function capturePatch(workspaceRoot: string): Promise<string> {
-  const { stdout } = await execFileAsync(
-    "git",
-    [
-      "-c",
-      "core.quotepath=false",
-      "diff",
-      "--binary",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--ignore-submodules=all",
-      "HEAD",
-      "--"
-    ],
-    {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-      timeout: 10_000,
-      maxBuffer: 2 * 1024 * 1024
-    }
-  );
-  return stdout;
-}
-
-function notRunVerification(): VerificationResult {
-  return {
-    passed: false,
-    summary: "Verifier was not run",
-    testResult: {
-      status: "not_run",
-      exitCode: null,
-      summary: "Verifier was not run",
-      durationMs: 0
-    }
-  };
+    });
 }
 
 async function loadTask(taskPath: string): Promise<{
@@ -585,95 +448,54 @@ async function runCommand(args: RunArguments): Promise<number> {
     loaded.taskDirectory,
     args.workspacePath
   );
-  const workspaceIdentity = await inspectCleanWorkspace(
-    workspaceRoot,
-    loaded.task.attribution?.baseSha
-  );
-
-  const { provider, modelSettings } = await createProvider(
+  const provider = await createProvider(
     args,
     loaded.taskDirectory
   );
-  const verifierPath = resolve(loaded.taskDirectory, "verifier.mjs");
-  const verifierScriptHash = sha256Text(
-    await readFile(verifierPath, "utf8")
-  );
-
-  const verifierVersion =
-    `w3-command-verifier-v1+sha256:${verifierScriptHash}`;
-  const verifier = new CommandVerifier({
-    scriptPath: verifierPath,
-    version: verifierVersion,
-    scriptSha256: verifierScriptHash,
-    timeoutMs: 60_000,
-    maxOutputBytes: 64 * 1024
-  });
-  const tools = createWeekTwoToolRegistrations([
-    {
-      id: "verify",
-      description: "Run the deterministic public smoke tests",
-      command: process.execPath,
-      args: [verifierPath],
-      timeoutMs: 60_000,
-      maxOutputBytes: 64 * 1024
-    }
-  ]);
-  const startedAt = new Date().toISOString();
+  const tools = weekTwoToolRegistrations;
   const runId = args.runId ?? `${loaded.task.id}-${randomUUID()}`;
-  const configuration = await createRunConfiguration({
-    runId,
-    comparisonId: args.comparisonId,
-    attemptIndex: args.attemptIndex,
-    startedAt,
-    task: loaded.task,
-    provider,
-    tools,
-    systemPrompt: W3_SYSTEM_PROMPT,
-    verifierVersion: verifier.version,
-    modelSettings,
-    ...(args.maxSteps === undefined
-      ? {}
-      : { budget: { maxSteps: args.maxSteps } }),
-    repositoryRoot: implementationRoot,
-    baseSha: workspaceIdentity.baseSha
-  });
-  const recorder = await RunRecorder.begin(resolve(args.runsDir), configuration);
+  const sessionsRoot = resolve(args.sessionsDir);
+  const session = args.resumeSessionId === undefined
+    ? await SessionStore.create({
+        sessionsRoot,
+        ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
+        workspaceRoot,
+        task: loaded.task
+      })
+    : await SessionStore.openForResume({
+        sessionsRoot,
+        sessionId: args.resumeSessionId,
+        workspaceRoot,
+        task: loaded.task,
+        ...(args.atStep === undefined ? {} : { atStep: args.atStep })
+      });
 
-  const start = performance.now();
-  const state = await runAgent({
-    runId,
-    task: loaded.task,
-    workspaceRoot,
-    provider,
-    tools,
-    events: recorder,
-    verifier,
-    systemPrompt: W3_SYSTEM_PROMPT,
-    budget: configuration.budget
-  });
-  const predictionPatch = await capturePatch(workspaceRoot);
-  const verification = state.verification ?? notRunVerification();
-  const outcome: RunOutcome = {
-    endedAt: new Date().toISOString(),
-    usage: state.usage,
-    steps: state.step,
-    toolCallCount: state.toolCallCount,
-    latencyMs: Math.max(0, Math.round(performance.now() - start)),
-    terminalReason: state.terminalReason,
-    patchHash: sha256Text(predictionPatch),
-    testResult: verification.testResult
-  };
-  const runMeta = await recorder.finalize({
-    outcome,
-    predictionPatch,
-    verifierResult: verification
-  });
+  let state;
+  try {
+    state = await runAgent({
+      runId,
+      task: loaded.task,
+      workspaceRoot,
+      provider,
+      tools,
+      events: new SessionEventSink(session),
+      systemPrompt: W3_SYSTEM_PROMPT,
+      ...(session.preparation === undefined
+        ? {}
+        : { resumeState: session.preparation.state }),
+      ...(args.maxSteps === undefined
+        ? {}
+        : { budget: { maxSteps: args.maxSteps } })
+    });
+  } finally {
+    await session.dispose();
+  }
 
   console.log(
     `${state.status === "completed" ? "✓" : "✗"} ${runId}: ${state.terminalReason}`
   );
-  console.log(`Run Meta: ${recorder.runMetaPath}`);
-  console.log(`Trace: ${resolve(recorder.runDirectory, runMeta.artifacts.tracePath)}`);
+  console.log(`Session: ${session.sessionId}`);
+  console.log(`Transcript: ${session.path}`);
   if (state.status === "completed") {
     console.log(`Final: ${state.finalOutput}`);
     return 0;
@@ -682,83 +504,69 @@ async function runCommand(args: RunArguments): Promise<number> {
   return 1;
 }
 
-async function readJson(path: string): Promise<unknown> {
-  return JSON.parse(await readFile(resolve(path), "utf8")) as unknown;
+function sessionsRootFrom(args: readonly string[]): string {
+  return resolve(valueAfter(args, "--sessions-dir") ?? "sessions");
 }
 
-function evidenceError(
-  label: string,
-  result: RunDirectoryValidationResult
-): Error {
-  return new Error(
-    `${label} evidence bundle is invalid: ${result.issues
-      .map((issue) => `${issue.path} ${issue.message}`)
-      .join("; ")}`
-  );
+function sessionIdFrom(args: readonly string[]): string {
+  return requiredValue(args, "--session-id");
 }
 
-async function readComparisonRun(
-  path: string,
-  metaOnly: boolean,
-  label: string
-): Promise<unknown> {
-  if (metaOnly) {
-    return await readJson(path);
+async function sessionCommand(args: readonly string[]): Promise<number> {
+  const operation = args[0];
+  const rest = args.slice(1);
+  const sessionsRoot = sessionsRootFrom(rest);
+  switch (operation) {
+    case "list":
+      console.log(JSON.stringify(await listSessions(sessionsRoot), null, 2));
+      return 0;
+    case "show": {
+      const inspection = await inspectSession(sessionsRoot, sessionIdFrom(rest));
+      console.log(JSON.stringify(inspection, null, 2));
+      return 0;
+    }
+    case "resume": {
+      const preparation = await SessionStore.prepareResume(
+        sessionsRoot,
+        sessionIdFrom(rest)
+      );
+      console.log(JSON.stringify(preparation, null, 2));
+      return preparation.status === "ready" ? 0 : 1;
+    }
+    case "rewind": {
+      const atStep = optionalStep(rest);
+      if (atStep === undefined) throw new Error("--at-step is required");
+      const preparation = await SessionStore.prepareResume(
+        sessionsRoot,
+        sessionIdFrom(rest),
+        atStep
+      );
+      console.log(JSON.stringify(preparation, null, 2));
+      return 0;
+    }
+    case "fork": {
+      const childSessionId = valueAfter(rest, "--child-session-id");
+      const atStep = optionalStep(rest);
+      const child = await forkSession({
+        sessionsRoot,
+        sourceSessionId: sessionIdFrom(rest),
+        ...(childSessionId === undefined ? {} : { childSessionId }),
+        ...(atStep === undefined ? {} : { atStep })
+      });
+      try {
+        console.log(JSON.stringify({
+          sessionId: child.sessionId,
+          path: child.path,
+          head: child.preparation?.head ?? null
+        }, null, 2));
+      } finally {
+        await child.dispose();
+      }
+      return 0;
+    }
+    default:
+      throw new Error("Expected session list, show, resume, rewind, or fork");
   }
-  const absolute = resolve(path);
-  if (basename(absolute) !== "run-meta.json") {
-    throw new Error(
-      `${label} must be a runs/<runId>/run-meta.json path unless --meta-only is used`
-    );
-  }
-  const result = await validateRunDirectory(dirname(absolute));
-  if (!result.valid || result.runMeta === undefined) {
-    throw evidenceError(label, result);
-  }
-  return result.runMeta;
-}
-
-async function compareCommand(args: readonly string[]): Promise<number> {
-  const metaOnly = args.includes("--meta-only");
-  const manifest = validateComparison(
-    await readComparisonRun(requiredValue(args, "--a"), metaOnly, "Run A"),
-    await readComparisonRun(requiredValue(args, "--b"), metaOnly, "Run B")
-  );
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
-  const output = valueAfter(args, "--output");
-  if (output === undefined) {
-    process.stdout.write(serialized);
-  } else {
-    await writeFile(resolve(output), serialized, {
-      encoding: "utf8",
-      flag: "wx"
-    });
-    console.log(`Comparison: ${resolve(output)}`);
-  }
-  return manifest.status === "valid_for_attribution" ? 0 : 1;
-}
-
-async function baselineCommand(args: readonly string[]): Promise<number> {
-  const metaPath = resolve(requiredValue(args, "--meta"));
-  if (basename(metaPath) !== "run-meta.json") {
-    throw new Error("--meta must name a runs/<runId>/run-meta.json file");
-  }
-  const evidence = await validateRunDirectory(dirname(metaPath));
-  if (!evidence.valid || evidence.runMeta === undefined) {
-    const result = {
-      eligible: false,
-      reasons: evidence.issues.map((issue) => ({
-        code: "EVIDENCE_BUNDLE_INVALID",
-        path: issue.path,
-        message: issue.message
-      }))
-    };
-    console.log(JSON.stringify(result, null, 2));
-    return 1;
-  }
-  const result = evaluateBaselineEligibility(evidence.runMeta);
-  console.log(JSON.stringify(result, null, 2));
-  return result.eligible ? 0 : 1;
 }
 
 async function main(args: readonly string[]): Promise<number> {
@@ -766,12 +574,10 @@ async function main(args: readonly string[]): Promise<number> {
     switch (args[0]) {
       case "run":
         return await runCommand(parseRunArguments(args.slice(1)));
-      case "compare":
-        return await compareCommand(args.slice(1));
-      case "baseline-check":
-        return await baselineCommand(args.slice(1));
+      case "session":
+        return await sessionCommand(args.slice(1));
       default:
-        throw new Error("Expected run, compare, or baseline-check");
+        throw new Error("Expected run or session");
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

@@ -8,7 +8,7 @@ importers:
 
   .:
     devDependencies:
-      '@repo-circuit/cli':
+      '@codel/cli':
         specifier: workspace:*
         version: link:apps/cli
       '@types/node':
@@ -29,26 +29,17 @@ importers:
       '@repo-circuit/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@repo-circuit/harness':
-        specifier: workspace:*
-        version: link:../../packages/harness
       '@repo-circuit/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@repo-circuit/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@repo-circuit/tools':
         specifier: workspace:*
         version: link:../../packages/tools
-      '@repo-circuit/trace':
-        specifier: workspace:*
-        version: link:../../packages/trace
 
   packages/core: {}
-
-  packages/harness:
-    dependencies:
-      '@repo-circuit/core':
-        specifier: workspace:*
-        version: link:../core
 
   packages/providers:
     dependencies:
@@ -56,13 +47,13 @@ importers:
         specifier: workspace:*
         version: link:../core
 
-  packages/tools:
+  packages/session:
     dependencies:
       '@repo-circuit/core':
         specifier: workspace:*
         version: link:../core
 
-  packages/trace:
+  packages/tools:
     dependencies:
       '@repo-circuit/core':
         specifier: workspace:*

@@ -22,15 +22,8 @@
     "usage": { "inputTokens": 180, "outputTokens": 50, "totalTokens": 230, "complete": true }
   },
   {
-    "kind": "tool_use",
-    "calls": [
-      { "id": "01-test", "name": "exec", "input": {} }
-    ],
-    "usage": { "inputTokens": 220, "outputTokens": 20, "totalTokens": 240, "complete": true }
-  },
-  {
     "kind": "end_turn",
-    "text": "Changed courseWeek to 3 and verified the test passes.",
+    "text": "Changed courseWeek to 3.",
     "usage": { "inputTokens": 250, "outputTokens": 24, "totalTokens": 274, "complete": true }
   }
 ]

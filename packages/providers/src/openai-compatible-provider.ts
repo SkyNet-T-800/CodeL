@@ -381,12 +381,8 @@ function toChatMessage(message: AgentMessage): Record<string, unknown> {
             tool_call_id: message.callId,
             content: serializeToolResult(message)
           };
-        case "verifier":
-          return {
-            role: "user",
-            content: `Deterministic verifier result: ${JSON.stringify(message.result)}`
-          };        
-    }
+      }
+    throw new Error("Unsupported Agent message role");
 }
 
 function createBody(
@@ -755,6 +751,4 @@ export class OpenAICompatibleProvider implements ModelAdapter {
         };
     }
 }
-
-
 

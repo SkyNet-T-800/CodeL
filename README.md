@@ -1,4 +1,4 @@
-# RepoCircuit · Coding Agent Runtime
+# CodeL · Coding Agent Runtime
 
 这是 Coding Agent 的参考实现：既可以用确定性的 Mock Provider 跑通可重复比对的 Agent Run，也可以连接 OpenAI-compatible API 运行 W3 coding benchmark。
 
@@ -10,10 +10,10 @@
 
 ```text
 TaskSpec → Mock Provider(tool_use) → read_file → Tool Result 回填
-         → Mock Provider(end_turn) → completed → JSONL Trace
+         → Mock Provider(end_turn) → completed → Session JSONL
 ```
 
-W1 演示仍然完全离线；W3 已支持真实模型、流式输出、工具调用和确定性 verifier。Session、数据库、UI 和 Docker Sandbox 仍不在当前范围内。
+W1 演示仍然完全离线；W3 已支持真实模型、流式输出和工具调用。公开检查应作为普通 Tool 结果返回，隐藏评测不属于在线 Agent Runtime。
 
 ## 环境
 
@@ -46,7 +46,7 @@ pnpm smoke:w3:deepseek
 unset DEEPSEEK_API_KEY
 ```
 
-每次任务的 Trace、diff、测试结果和运行元数据会写入 `runs/<run-id>/`。项目不会自动读取 `.env`，也不要把真实 Key 写入仓库。
+每次任务的会话记录会写入 `sessions/<session-id>.jsonl`。项目不会自动读取 `.env`，也不要把真实 Key 写入仓库。
 
 需要降低思考强度时，可以保持思考模式并改成 `low`：
 
@@ -62,37 +62,26 @@ REPO_CIRCUIT_THINKING=disabled pnpm smoke:w3:deepseek
 
 也可以通过 `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 和 `DEEPSEEK_PROVIDER_NAME` 覆盖默认配置。DeepSeek 使用专用变量，避免误用当前 shell 里遗留的 OpenAI/Kimi endpoint。`DEEPSEEK_API_KEY` 优先；如果未设置，CLI 会回退到 `REPO_CIRCUIT_API_KEY`。
 
-如需让一次运行进入 baseline 比较，还要显式填写可复现的 `DEEPSEEK_MODEL_REVISION`；不填写时会如实记录为 `unknown`，普通运行不受影响。
-
 ## 一条命令验收
 
 ```bash
 pnpm verify
 ```
 
-它会依次执行：严格类型检查、全量测试、TypeScript 构建，以及 6 个离线 W3 CLI smoke tasks。
-
-预期末尾的汇总包含：
-
-```json
-{
-  "attempted": 6,
-  "completed": 4,
-  "acceptance": "passed"
-}
-```
+它会依次执行严格类型检查、全量测试和 TypeScript 构建。离线 W3 CLI smoke tasks 可通过 `pnpm smoke:w3` 单独运行。
 
 ## 单独运行 CLI
 
 ```bash
 pnpm build
-pnpm exec repo-circuit run \
+pnpm exec codel run \
   --task fixtures/hello-repo/task.json \
-  --trace .traces/fixture-run.jsonl \
+  --sessions-dir .sessions \
+  --session-id fixture-readme-run \
   --run-id fixture-readme-run
 ```
 
-Trace 位于 `.traces/fixture-run.jsonl`。每个物理行都是一个完整 JSON 对象，最后一行也以换行结尾。
+Session transcript 位于 `.sessions/fixture-readme-run.jsonl`。每个物理行都是一个完整 JSON 对象，最后一行也以换行结尾。
 
 ## 架构
 
@@ -102,12 +91,12 @@ flowchart LR
   H --> R["Stateless Runtime"]
   H --> P["Mock Provider"]
   H --> X["Injected read_file Tool"]
-  H --> W["JSONL Event Writer"]
+  H --> W["Session JSONL Store"]
   R --> P
   R --> X
   R --> S["Typed Agent State"]
   R --> W
-  W --> J["Deterministic Trace"]
+  W --> J["Resumable Transcript"]
   R --> H
 ```
 
@@ -124,12 +113,12 @@ packages/
   core/                # 契约、TaskSpec 校验、无 Session 的 Runtime
   providers/           # 两段式 Scripted Mock Provider
   tools/               # 注入式 read_file 演示工具
-  trace/               # JSONL EventSink
+  session/             # Resume/Rewind/Fork 与 JSONL transcript
 fixtures/
   hello-repo/          # 第一个 Fixture Repo、任务和 golden 结果
 docs/
   rfcs/                # Runtime 设计决策
-tests/                 # Runtime、确定性、预算、TaskSpec、JSONL 测试
+tests/                 # Runtime、确定性、预算、TaskSpec、Session 测试
 ```
 
 所有内部包都通过 `workspace:*` 声明依赖；构建后的 CLI 使用各包的 `dist`，不依赖本机全局 TypeScript 或未提交产物。
@@ -181,14 +170,14 @@ pnpm build           # project references 构建所有 workspace 包
 pnpm dev -- run ...  # 可选：直接运行 TypeScript 源码进行开发
 pnpm smoke:w3        # 构建并运行 6 个离线 W3 smoke tasks
 pnpm smoke:w3:deepseek # 使用真实 DeepSeek V4 Flash 运行同一组任务
-pnpm verify          # typecheck + tests + W3 smoke 完整门禁
+pnpm verify          # typecheck + tests + build
 ```
 
 ## W1 验收对应关系
 
 | 计划要求 | 本仓库证据 |
 | --- | --- |
-| pnpm monorepo | 1 个 app + 4 个 packages，内部依赖为 `workspace:*` |
+| pnpm monorepo | 1 个 app + 5 个 packages，内部依赖为 `workspace:*` |
 | CLI / TaskSpec | 构建后的 `apps/cli/dist/index.js` 读取并校验 JSON |
 | Mock Provider | 第一次 `tool_use`，第二次 `end_turn`；测试断言调用恰好两次 |
 | Typed Agent State | `running / completed / failed` 判别联合类型 |

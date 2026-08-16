@@ -43,9 +43,9 @@ const maxSteps = positiveIntegerAfter(args, "--max-steps");
 if (provider !== "scripted" && provider !== "openai" && provider !== "deepseek") {
   throw new Error("--provider must be scripted, openai, or deepseek");
 }
-const runsDir = resolve(
+const sessionsDir = resolve(
   repositoryRoot,
-  valueAfter(args, "--runs-dir") ?? "runs"
+  valueAfter(args, "--sessions-dir") ?? "sessions"
 );
 const runPrefix =
   valueAfter(args, "--run-prefix") ??
@@ -75,7 +75,7 @@ for (const taskDirectory of taskDirectories) {
     execFileSync("git", ["init", "--quiet"], { cwd: workspace });
     execFileSync(
       "git",
-      ["config", "user.name", "RepoCircuit Smoke"],
+      ["config", "user.name", "CodeL Smoke"],
       { cwd: workspace }
     );
     execFileSync(
@@ -106,7 +106,7 @@ for (const taskDirectory of taskDirectories) {
     const cli = spawnSync(
       process.execPath,
       [
-        join(repositoryRoot, "apps", "cli", "bin", "repo-circuit.mjs"),
+        join(repositoryRoot, "apps", "cli", "bin", "codel.mjs"),
         "run",
         "--task",
         join(taskDirectory, "task.json"),
@@ -114,12 +114,12 @@ for (const taskDirectory of taskDirectories) {
         workspace,
         "--provider",
         provider,
-        "--runs-dir",
-        runsDir,
+        "--sessions-dir",
+        sessionsDir,
+        "--session-id",
+        runId,
         "--run-id",
         runId,
-        "--attempt-index",
-        "0",
         ...(maxSteps === undefined ? [] : ["--max-steps", maxSteps])
       ],
       {

@@ -69,7 +69,7 @@ export interface ToolDefinition {
 export interface AgentError {
     readonly code: string;
     readonly message: string;
-    readonly phase?: "provider" | "tool" | "loop" | "verifier" | "recorder";
+    readonly phase?: "provider" | "tool" | "loop";
     readonly retryable?: boolean;
     readonly details?: JsonObject;
 }
@@ -77,19 +77,6 @@ export interface AgentError {
 export type ToolExecutionResult = 
   | { readonly ok: true; readonly output: JsonValue}
   | { readonly ok: false; readonly error: AgentError};
-
-export interface TestResult {
-    readonly status: "passed" | "failed" | "not_run" | "infra_error";
-    readonly exitCode: number | null;
-    readonly summary: string;
-    readonly durationMs: number;
-}  
-
-export interface VerificationResult {
-    readonly passed: boolean;
-    readonly summary: string;
-    readonly testResult: TestResult;
-}
 
 export type AgentMessage = 
   | { readonly role: "user"; readonly content: string}
@@ -108,10 +95,6 @@ export type AgentMessage =
       readonly callId: string;
       readonly name: string;
       readonly result: ToolExecutionResult;
-    }
-  | {
-      readonly role: "verifier";
-      readonly result: VerificationResult;
     }; 
 
 export interface ProviderRequest {
@@ -186,17 +169,6 @@ export interface RegisteredTool {
     ): Promise<ToolExecutionResult>;
 }
 
-export interface VerifierInput {
-    readonly task: TaskSpec;
-    readonly workspaceRoot: string;
-    readonly signal: AbortSignal;
-}
-
-export interface Verifier {
-    readonly version: string;
-    verify(input: VerifierInput): Promise<VerificationResult>;
-}
-
 export interface AgentEventData {
     readonly "run.begin": {
         readonly taskId: string;
@@ -228,28 +200,22 @@ export interface AgentEventData {
         readonly step: number;
         readonly text: string;
     };
-    readonly "verify.begin": {
-        readonly step: number;
-        readonly verifierVersion: string;
-    };
-    readonly "verify.result": {
-        readonly step: number;
-        readonly result: VerificationResult;
-    };
     readonly "step.end": { 
         readonly step: number;
-        readonly reason: "tool_use" | "end_turn" | "verification_failed" | "budget_exhausted" | "error";
+        readonly reason: "tool_use" | "end_turn" | "budget_exhausted" | "error";
     };
     readonly "run.end": {
         readonly status: "completed";
         readonly steps: number;
-        readonly terminalReason?: "verified" | "end_turn";
+        readonly terminalReason?: "end_turn";
     };
     readonly "run.error": {
         readonly steps: number;
         readonly error: AgentError;
     };
     readonly "turn.interrupted": {
+        readonly taskId: string;
+        readonly instruction: string;
         readonly steps: number;
         readonly error: AgentError;
     }
@@ -274,6 +240,14 @@ export interface EventSink {
     append(event: AgentEvent, signal?: AbortSignal): Promise<void>;
 }
 
+export interface AgentResumeState {
+    readonly messages: readonly AgentMessage[];
+    readonly usage: TokenUsage;
+    readonly toolCallCount: number;
+    readonly lastCompletedStep: number;
+    readonly seenCallIds: readonly string[];
+}
+
 interface StateBase {
     readonly runId: string;
     readonly task: TaskSpec;
@@ -282,7 +256,6 @@ interface StateBase {
     readonly usage: TokenUsage;
     readonly toolCallCount: number;
     readonly terminalReason: string;
-    readonly verification: VerificationResult | undefined;
 }
 
 export type RunningAgentState = StateBase & {
@@ -307,72 +280,3 @@ export type InterruptedAgentState = StateBase & {
 export type TerminalAgentState = CompletedAgentState | FailedAgentState | InterruptedAgentState;
 
 export type AgentState = RunningAgentState | TerminalAgentState;
-
-export type UnknownOrUnsupported = string | "unknown" | "unsupported";
-
-export interface FrozenRunConfiguration {
-    readonly schemaVersion: 1;
-    readonly runId: string;
-    readonly comparisonId: string | null;
-    readonly attemptIndex: number;
-    readonly identity: {
-        readonly taskId: string;
-        readonly baseSha: string;
-        readonly fixtureVersion: string;
-        readonly startedAt: string;
-        readonly agentCommit: string;
-        readonly harnessCommit: string;
-    }
-    readonly model: {
-        readonly provider: string;
-        readonly modelId: string;
-        readonly modelRevision: UnknownOrUnsupported;
-        readonly reasoningEffort: UnknownOrUnsupported;
-        readonly temperature: number | "unknown" | "unsupported";
-        readonly topP: number | "unknown" | "unsupported";
-        readonly seed: number | "unknown" | "unsupported";
-    };
-    readonly prompt: {
-        readonly systemPromptHash: string;
-    }
-    readonly tools: {
-        readonly toolSchemaHash: string;
-        readonly enabledTools: readonly string[];
-        readonly toolPolicyHash: string;
-    }
-    readonly context: {
-        readonly contextStrategy: string;
-        readonly maxContextTokens: number | "unsupported";
-    }
-    readonly budget: RunBudget;
-    readonly evaluation: {
-        readonly verifierVersion: string;
-        readonly evaluatorCommit: string;
-        readonly scorer: string;
-    };
-}
-
-export interface RunOutcome {
-    readonly endedAt: string;
-    readonly usage: TokenUsage;
-    readonly steps: number;
-    readonly toolCallCount: number;
-    readonly latencyMs: number;
-    readonly terminalReason: string;
-    readonly patchHash: string;
-    readonly testResult: TestResult;
-}
-
-export interface RunArtifacts {
-    readonly tracePath: string;
-    readonly traceSha256: string;
-    readonly patchPath: string;
-    readonly patchSha256: string;
-    readonly verifierResultPath: string;
-    readonly verifierResultSha256: string;
-}
-
-export interface RunMeta extends FrozenRunConfiguration {
-    readonly outcome: RunOutcome;
-    readonly artifacts: RunArtifacts;
-}

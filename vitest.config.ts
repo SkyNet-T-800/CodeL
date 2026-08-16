@@ -13,8 +13,8 @@ export default defineConfig({
     alias: {
       "@repo-circuit/core": sourcePath("./packages/core/src/index.ts"),
       "@repo-circuit/providers": sourcePath("./packages/providers/src/index.ts"),
-      "@repo-circuit/tools": sourcePath("./packages/tools/src/index.ts"),
-      "@repo-circuit/trace": sourcePath("./packages/trace/src/index.ts")
+      "@repo-circuit/session": sourcePath("./packages/session/src/index.ts"),
+      "@repo-circuit/tools": sourcePath("./packages/tools/src/index.ts")
     }
   }
 });
