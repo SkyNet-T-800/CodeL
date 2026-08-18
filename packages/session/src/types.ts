@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentResumeState,
+  ContextSelectionManifest,
   TokenUsage
 } from "@repo-circuit/core";
 
@@ -35,6 +36,7 @@ export interface SessionProjection {
   readonly lastCompletedStep: number;
   readonly seenCallIds: readonly string[];
   readonly pendingToolCalls: readonly PendingToolCall[];
+  readonly contextSelectionManifest?: ContextSelectionManifest;
 }
 
 export interface SessionHead {

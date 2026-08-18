@@ -8,6 +8,7 @@
   },
   "files": ["bin", "dist"],
   "dependencies": {
+    "@repo-circuit/context": "workspace:*",
     "@repo-circuit/core": "workspace:*",
     "@repo-circuit/providers": "workspace:*",
     "@repo-circuit/session": "workspace:*",

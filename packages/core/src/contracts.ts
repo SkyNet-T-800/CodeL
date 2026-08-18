@@ -38,6 +38,24 @@ export interface TokenUsage {
     readonly complete: boolean;
 }
 
+export interface ContextSelectionManifest {
+    readonly strategy: "full";
+    readonly strategyVersion: 1;
+    readonly sessionId: string;
+    readonly sourceHeadEventId: string;
+    readonly sourceEventIds: readonly string[];
+    readonly sourceMessageCount: number;
+    readonly includedEventIds: readonly string[];
+    readonly droppedEventIds: readonly string[];
+    readonly evidenceIds: readonly string[];
+    readonly memoryIds: readonly string[];
+    readonly budgetTokens: number | null;
+    readonly estimatedTokensBefore: number;
+    readonly estimatedTokensAfter: number;
+    readonly sourceHash: string;
+    readonly summaryHash: string;
+}
+
 export const ZERO_TOKEN_USAGE: TokenUsage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -189,6 +207,8 @@ export interface AgentEventData {
         readonly callId: string;
         readonly name: string;
         readonly input: JsonObject;
+        readonly assistantContent?: string;
+        readonly reasoningContent?: string;
     };
     readonly "tool.result": {
         readonly step: number;
@@ -199,6 +219,7 @@ export interface AgentEventData {
     readonly "assistant.final": {
         readonly step: number;
         readonly text: string;
+        readonly reasoningContent?: string;
     };
     readonly "step.end": { 
         readonly step: number;
@@ -218,7 +239,13 @@ export interface AgentEventData {
         readonly instruction: string;
         readonly steps: number;
         readonly error: AgentError;
-    }
+    };
+    readonly "context.compacted": {
+        readonly taskId: string;
+        readonly instruction: string;
+        readonly summary: string;
+        readonly manifest: ContextSelectionManifest;
+    };
 }
 
 export type AgentEventType = keyof AgentEventData;

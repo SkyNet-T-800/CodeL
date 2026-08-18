@@ -11,6 +11,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      "@repo-circuit/context": sourcePath("./packages/context/src/index.ts"),
       "@repo-circuit/core": sourcePath("./packages/core/src/index.ts"),
       "@repo-circuit/providers": sourcePath("./packages/providers/src/index.ts"),
       "@repo-circuit/session": sourcePath("./packages/session/src/index.ts"),

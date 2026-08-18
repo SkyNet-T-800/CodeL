@@ -23,7 +23,8 @@ const AGENT_EVENT_TYPES = new Set([
   "step.end",
   "run.end",
   "run.error",
-  "turn.interrupted"
+  "turn.interrupted",
+  "context.compacted"
 ]);
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
@@ -44,6 +45,52 @@ function isPositiveInteger(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isUniqueStringArray(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.every(isNonEmptyString) &&
+    new Set(value).size === value.length
+  );
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function isContextSelectionManifest(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    value.strategy !== "full" ||
+    value.strategyVersion !== 1 ||
+    !isNonEmptyString(value.sessionId) ||
+    !isNonEmptyString(value.sourceHeadEventId) ||
+    !isUniqueStringArray(value.sourceEventIds) ||
+    !isPositiveInteger(value.sourceMessageCount) ||
+    !isUniqueStringArray(value.includedEventIds) ||
+    !isUniqueStringArray(value.droppedEventIds) ||
+    !isUniqueStringArray(value.evidenceIds) ||
+    !isUniqueStringArray(value.memoryIds) ||
+    (value.budgetTokens !== null && !isPositiveInteger(value.budgetTokens)) ||
+    !isPositiveInteger(value.estimatedTokensBefore) ||
+    !isPositiveInteger(value.estimatedTokensAfter) ||
+    !isSha256(value.sourceHash) ||
+    !isSha256(value.summaryHash)
+  ) {
+    return false;
+  }
+  const sourceIds = value.sourceEventIds;
+  const includedIds = value.includedEventIds;
+  const droppedIds = value.droppedEventIds;
+  const included = new Set(includedIds);
+  const dropped = new Set(droppedIds);
+  return (
+    sourceIds.at(-1) === value.sourceHeadEventId &&
+    includedIds.every((id) => sourceIds.includes(id) && !dropped.has(id)) &&
+    droppedIds.every((id) => sourceIds.includes(id) && !included.has(id)) &&
+    sourceIds.every((id) => included.has(id) || dropped.has(id))
+  );
 }
 
 function isTokenUsage(value: unknown): boolean {
@@ -111,7 +158,11 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isPositiveInteger(data.step) &&
         isNonEmptyString(data.callId) &&
         isNonEmptyString(data.name) &&
-        isRecord(data.input)
+        isRecord(data.input) &&
+        (data.assistantContent === undefined ||
+          typeof data.assistantContent === "string") &&
+        (data.reasoningContent === undefined ||
+          typeof data.reasoningContent === "string")
       );
     case "tool.result":
       return (
@@ -121,7 +172,12 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isToolResult(data.result)
       );
     case "assistant.final":
-      return isPositiveInteger(data.step) && typeof data.text === "string";
+      return (
+        isPositiveInteger(data.step) &&
+        typeof data.text === "string" &&
+        (data.reasoningContent === undefined ||
+          typeof data.reasoningContent === "string")
+      );
     case "step.end":
       return (
         isPositiveInteger(data.step) &&
@@ -143,6 +199,13 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         typeof data.instruction === "string" &&
         isNonNegativeInteger(data.steps) &&
         isAgentError(data.error)
+      );
+    case "context.compacted":
+      return (
+        isNonEmptyString(data.taskId) &&
+        typeof data.instruction === "string" &&
+        isNonEmptyString(data.summary) &&
+        isContextSelectionManifest(data.manifest)
       );
     default:
       return false;
@@ -217,7 +280,11 @@ function taskFromRunStart(event: SessionLogEvent): {
   readonly taskId: string;
   readonly instruction: string;
 } {
-  if (event.type === "run.begin" || event.type === "turn.interrupted") {
+  if (
+    event.type === "run.begin" ||
+    event.type === "turn.interrupted" ||
+    event.type === "context.compacted"
+  ) {
     return {
       taskId: event.data.taskId,
       instruction: event.data.instruction
@@ -244,7 +311,8 @@ function startProtocolRun(
       "step.end",
       "run.end",
       "run.error",
-      "turn.interrupted"
+      "turn.interrupted",
+      "context.compacted"
     ].includes(parentEvent.type)
   ) {
     return corrupt(
@@ -259,6 +327,28 @@ function startProtocolRun(
       task.instruction !== parentState.instruction)
   ) {
     return corrupt(`Run ${event.runId} changes the Session Task`);
+  }
+  if (event.type === "context.compacted") {
+    if (
+      parentEvent === undefined ||
+      parentState === undefined ||
+      !parentState.terminal ||
+      parentState.openStep !== undefined ||
+      parentState.pending.size > 0 ||
+      event.data.manifest.sessionId !== event.sessionId ||
+      event.data.manifest.sourceHeadEventId !== parentEvent.uuid
+    ) {
+      return corrupt(
+        `Context compaction ${event.runId} is not attached to a closed safe point`
+      );
+    }
+    return {
+      ...parentState,
+      runId: event.runId,
+      terminal: true,
+      openStep: undefined,
+      pending: new Map()
+    };
   }
   const inheritedStep = parentState?.lastCompletedStep ?? 0;
   if (
@@ -324,6 +414,8 @@ function applyProtocolEvent(
   switch (event.type) {
     case "run.begin":
       return corrupt(`Run ${event.runId} contains a second run.begin`);
+    case "context.compacted":
+      return corrupt(`Run ${event.runId} contains a second context.compacted`);
     case "step.begin":
       if (
         next.openStep !== undefined ||

@@ -9,6 +9,7 @@ CodeL 是一个使用 TypeScript 构建的 Coding Agent CLI。它把模型调用
 - 仓库浏览、检索、读取、补丁修改和 Diff 工具；
 - OpenAI-compatible 流式模型适配器与确定性 Scripted Provider；
 - 基于 JSONL 的会话记录，以及 Resume、Rewind 和 Fork；
+- 保留 Canonical Transcript 的可审计 Full Context Compaction；
 - 完整的 TypeScript 类型检查、单元测试和集成测试。
 
 ## 环境要求
@@ -154,6 +155,31 @@ pnpm exec codel session fork --session-id quickstart --at-step 1 \
 - `session resume` 和 `session rewind` 只检查并输出恢复准备结果；要真正继续执行，请使用 `codel run --resume-session ...`；
 - 当前 Rewind 只处理会话状态，不恢复工作区文件。执行前请自行使用 Git 或其他快照机制保护文件修改。
 
+### 压缩上下文
+
+对已结束且没有悬空 Tool Call 的会话，可以直接提交一份已审阅摘要：
+
+```bash
+pnpm exec codel compact \
+  --session-id quickstart \
+  --sessions-dir .sessions \
+  --summary "已完成仓库检查；下一步运行验证并处理失败。"
+```
+
+也可以复用模型 Provider 生成摘要：
+
+```bash
+pnpm exec codel compact \
+  --session-id quickstart \
+  --sessions-dir .sessions \
+  --task fixtures/hello-repo/task.json \
+  --provider deepseek
+```
+
+`codel session compact ...` 是同一命令的别名。成功后，CLI 只在原 JSONL 末尾追加一条 `context.compacted` checkpoint；旧事件和分支不会被删除或改写。后续 Resume 从 checkpoint 恢复模型可见消息，并继续回放 checkpoint 之后的新事件。
+
+每次 checkpoint 都带 `ContextSelectionManifest`，记录策略版本、来源 head、included/dropped event ID、预算、Token 估算和来源 Hash。当前首版只实现手动 Full Compaction，不包含自动阈值压缩、Memory、Embedding 或向量检索。
+
 ## 架构
 
 ```mermaid
@@ -164,7 +190,8 @@ flowchart LR
   C <--> E["Repository Tools"]
   C --> F["Typed Agent Events"]
   F --> G["Session JSONL"]
-  G --> H["Projection / Resume"]
+  G --> H["Context Projection"]
+  H --> I["Resume"]
 ```
 
 CodeL 使用 pnpm workspace 管理多个边界清晰的模块：
@@ -172,6 +199,7 @@ CodeL 使用 pnpm workspace 管理多个边界清晰的模块：
 ```text
 apps/cli/             CLI 参数、配置加载和依赖组装
 packages/core/        TaskSpec、领域契约、Agent Runtime 和事件协议
+packages/context/     纯 ContextStrategy、Full Compaction 与 Selection Manifest
 packages/providers/   Scripted 与 OpenAI-compatible Provider
 packages/tools/       路径安全的仓库读取、检索和修改工具
 packages/session/     JSONL 会话、投影、Resume、Rewind 与 Fork
@@ -180,7 +208,7 @@ fixtures/             可重复运行的示例工作区与任务
 benchmarks/           CLI smoke 场景
 ```
 
-依赖方向保持为 `apps/cli → core/providers/tools/session`，其余 workspace 包只通过 `core` 共享领域契约。更完整的模块职责、数据流和开发约束见 [AGENTS.md](AGENTS.md)。
+依赖方向保持为 `apps/cli → context/core/providers/tools/session`、`session → context → core`，其余 workspace 包只通过 `core` 共享领域契约。更完整的模块职责、数据流和开发约束见 [AGENTS.md](AGENTS.md)。
 
 ## 开发
 

@@ -446,7 +446,13 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                     {
                         ...nextEnvelope(),
                         type: "assistant.final",
-                        data: { step, text: response.text }
+                        data: {
+                            step,
+                            text: response.text,
+                            ...(response.reasoningContent === undefined
+                                ? {}
+                                : { reasoningContent: response.reasoningContent })
+                        }
                     },
                     signal
                 );
@@ -513,7 +519,7 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                 ]
             };
 
-            for(const call of response.calls) {
+            for (const [callIndex, call] of response.calls.entries()) {
                 signal.throwIfAborted();
                 if (state.toolCallCount >= budget.maxToolCalls) {
                     throw loopFailure(
@@ -540,7 +546,18 @@ export async function runAgent(options: RunAgentOptions): Promise<TerminalAgentS
                             step,
                             callId: call.id,
                             name: call.name,
-                            input: call.input
+                            input: call.input,
+                            ...(callIndex === 0
+                                ? {
+                                    assistantContent: response.text ?? "",
+                                    ...(response.reasoningContent === undefined
+                                        ? {}
+                                        : {
+                                            reasoningContent:
+                                                response.reasoningContent
+                                        })
+                                }
+                                : {})
                         }
                     },
                     signal

@@ -96,11 +96,13 @@ function assertNextAgentEvent(
   if (previous === undefined || previous.runId !== event.runId) {
     if (
       event.seq !== 1 ||
-      (event.type !== "run.begin" && event.type !== "turn.interrupted")
+      (event.type !== "run.begin" &&
+        event.type !== "turn.interrupted" &&
+        event.type !== "context.compacted")
     ) {
       throw new SessionError(
         "CORRUPT_EVENT_LOG",
-        `A new Run must start with run.begin or a pre-start interruption at seq 1; received ${event.type} seq ${event.seq}`
+        `A new Run cannot start with ${event.type} seq ${event.seq}`
       );
     }
     return;
@@ -127,6 +129,12 @@ export interface OpenSessionForResumeInput {
   readonly task: TaskSpec;
   /** Select an older completed Step and append a new branch in the same JSONL. */
   readonly atStep?: number;
+}
+
+export interface OpenSessionForMaintenanceInput {
+  readonly sessionsRoot: string;
+  readonly sessionId: string;
+  readonly expectedHeadUuid: string;
 }
 
 interface CreateForkInput {
@@ -197,10 +205,25 @@ export class SessionStore {
     }
     const sessionsRoot = resolve(input.sessionsRoot);
     await mkdir(sessionsRoot, { recursive: true, mode: 0o700 });
-    const copied = input.sourceChain.map((event): SessionLogEvent => ({
-      ...structuredClone(event),
-      sessionId: input.childSessionId
-    }));
+    const copied = input.sourceChain.map((source): SessionLogEvent => {
+      const event = structuredClone(source);
+      return event.type === "context.compacted"
+        ? {
+            ...event,
+            sessionId: input.childSessionId,
+            data: {
+              ...event.data,
+              manifest: {
+                ...event.data.manifest,
+                sessionId: input.childSessionId
+              }
+            }
+          }
+        : {
+            ...event,
+            sessionId: input.childSessionId
+          };
+    });
     const path = sessionPath(sessionsRoot, input.childSessionId);
     let writer: SessionJsonlWriter | undefined;
     try {
@@ -283,6 +306,52 @@ export class SessionStore {
       sessionsRoot,
       input.sessionId,
       workspaceRoot,
+      writer,
+      head,
+      preparation
+    );
+  }
+
+  static async openForMaintenance(
+    input: OpenSessionForMaintenanceInput
+  ): Promise<SessionStore> {
+    const sessionsRoot = resolve(input.sessionsRoot);
+    const inspection = await loadInspection(
+      sessionsRoot,
+      input.sessionId,
+      true
+    );
+    const preparation = prepareResume(
+      inspection.activeChain,
+      input.sessionId
+    );
+    const head = inspection.activeChain.at(-1);
+    const terminalSafe =
+      head?.type === "run.end" ||
+      head?.type === "run.error" ||
+      head?.type === "context.compacted" ||
+      (head?.type === "turn.interrupted" && head.seq === 1);
+    if (
+      preparation.status !== "ready" ||
+      preparation.ignoredTailEvents !== 0 ||
+      head === undefined ||
+      head.uuid !== input.expectedHeadUuid ||
+      !terminalSafe
+    ) {
+      throw new SessionError(
+        "UNSAFE_RESUME",
+        "Session changed or is not at a closed maintenance safe point"
+      );
+    }
+    const writer = await SessionJsonlWriter.resume(
+      inspection.path,
+      input.sessionId,
+      inspection.events
+    );
+    return new SessionStore(
+      sessionsRoot,
+      input.sessionId,
+      inspection.activeChain[0]?.cwd ?? "",
       writer,
       head,
       preparation

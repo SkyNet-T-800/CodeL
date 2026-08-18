@@ -20,6 +20,10 @@ import {
   type TaskSpec
 } from "@repo-circuit/core";
 import {
+  FULL_COMPACTION_INSTRUCTION,
+  FullCompactionStrategy
+} from "@repo-circuit/context";
+import {
   OpenAICompatibleProvider,
   ScriptedMockProvider
 } from "@repo-circuit/providers";
@@ -48,6 +52,16 @@ interface RunArguments {
   readonly atStep: number | undefined;
 }
 
+interface CompactArguments {
+  readonly sessionId: string;
+  readonly sessionsDir: string;
+  readonly summary: string | undefined;
+  readonly taskPath: string | undefined;
+  readonly provider: RunArguments["provider"];
+  readonly scriptPath: string | undefined;
+  readonly workspacePath: string | undefined;
+}
+
 function usage(): string {
   return [
     "Usage:",
@@ -62,6 +76,10 @@ function usage(): string {
     "  codel session rewind --session-id <id> --at-step <n>",
     "  codel session fork --session-id <id> [--at-step <n>]",
     "    [--child-session-id <id>] [--sessions-dir <sessions>]",
+    "  codel compact --session-id <id> [--sessions-dir <sessions>]",
+    "    [--summary <reviewed-summary>]",
+    "    [--task <task.json> --provider scripted|openai|deepseek]",
+    "    [--script <script.json>] [--workspace <workspace>]",
     "",
     "Real Provider environment:",
     "  openai: REPO_CIRCUIT_API_KEY, REPO_CIRCUIT_BASE_URL, REPO_CIRCUIT_MODEL",
@@ -157,6 +175,31 @@ function parseRunArguments(args: readonly string[]): RunArguments {
     sessionId,
     resumeSessionId,
     atStep
+  };
+}
+
+function parseCompactArguments(args: readonly string[]): CompactArguments {
+  const provider = valueAfter(args, "--provider") ?? "scripted";
+  if (
+    provider !== "scripted" &&
+    provider !== "openai" &&
+    provider !== "deepseek"
+  ) {
+    throw new Error(`--provider must be scripted, openai, or deepseek`);
+  }
+  const summary = valueAfter(args, "--summary");
+  const taskPath = valueAfter(args, "--task");
+  if (summary === undefined && taskPath === undefined) {
+    throw new Error("--summary or --task is required for compact");
+  }
+  return {
+    sessionId: requiredValue(args, "--session-id"),
+    sessionsDir: valueAfter(args, "--sessions-dir") ?? "sessions",
+    summary,
+    taskPath,
+    provider,
+    scriptPath: valueAfter(args, "--script"),
+    workspacePath: valueAfter(args, "--workspace")
   };
 }
 
@@ -504,6 +547,140 @@ async function runCommand(args: RunArguments): Promise<number> {
   return 1;
 }
 
+function taskIdentityFromSession(
+  inspection: Awaited<ReturnType<typeof inspectSession>>
+): { readonly taskId: string; readonly instruction: string } {
+  const first = inspection.activeChain[0];
+  if (
+    first === undefined ||
+    (first.type !== "run.begin" && first.type !== "turn.interrupted")
+  ) {
+    throw new Error("Session has no canonical Task identity");
+  }
+  return {
+    taskId: first.data.taskId,
+    instruction: first.data.instruction
+  };
+}
+
+async function generateCompactionSummary(
+  args: CompactArguments,
+  inspection: Awaited<ReturnType<typeof inspectSession>>
+): Promise<string> {
+  if (args.summary !== undefined) {
+    if (args.summary.trim().length === 0) {
+      throw new Error("--summary must be non-empty");
+    }
+    return args.summary.trim();
+  }
+  const loaded = await loadTask(args.taskPath!);
+  const identity = taskIdentityFromSession(inspection);
+  if (
+    loaded.task.id !== identity.taskId ||
+    loaded.task.instruction !== identity.instruction
+  ) {
+    throw new Error("Compact Task differs from the Session transcript");
+  }
+  const workspaceRoot = await resolveWorkspace(
+    loaded.task,
+    loaded.taskDirectory,
+    args.workspacePath
+  );
+  if (
+    inspection.activeChain[0]?.cwd !== undefined &&
+    inspection.activeChain[0].cwd !== workspaceRoot
+  ) {
+    throw new Error("Compact workspace differs from the Session transcript");
+  }
+  const provider = await createProvider(
+    {
+      taskPath: loaded.taskPath,
+      runId: undefined,
+      provider: args.provider,
+      scriptPath: args.scriptPath,
+      workspacePath: args.workspacePath,
+      maxSteps: undefined,
+      sessionsDir: args.sessionsDir,
+      sessionId: undefined,
+      resumeSessionId: undefined,
+      atStep: undefined
+    },
+    loaded.taskDirectory
+  );
+  const response = await provider.complete({
+    task: loaded.task,
+    systemPrompt: W3_SYSTEM_PROMPT,
+    messages: [
+      ...inspection.projection.messages,
+      { role: "user", content: FULL_COMPACTION_INSTRUCTION }
+    ],
+    tools: []
+  });
+  if (response.kind !== "end_turn" || response.text.trim().length === 0) {
+    throw new Error("Compaction Provider did not return a non-empty summary");
+  }
+  return response.text.trim();
+}
+
+async function compactCommand(args: CompactArguments): Promise<number> {
+  const sessionsRoot = resolve(args.sessionsDir);
+  const inspection = await inspectSession(sessionsRoot, args.sessionId);
+  if (inspection.projection.status === "open") {
+    throw new Error("Cannot compact an open Session");
+  }
+  const head = inspection.activeChain.at(-1);
+  if (head === undefined) {
+    throw new Error("Cannot compact an empty Session");
+  }
+  const identity = taskIdentityFromSession(inspection);
+  const summary = await generateCompactionSummary(args, inspection);
+  const projection = new FullCompactionStrategy().project({
+    sessionId: args.sessionId,
+    taskId: identity.taskId,
+    instruction: identity.instruction,
+    messages: inspection.projection.messages,
+    sourceEvents: inspection.activeChain.map((event) => ({ id: event.uuid })),
+    summary,
+    pinnedEventIds: [inspection.activeChain[0]!.uuid]
+  });
+  if (
+    projection.manifest.estimatedTokensAfter >=
+    projection.manifest.estimatedTokensBefore
+  ) {
+    console.log("No compactable history yet.");
+    return 0;
+  }
+
+  const session = await SessionStore.openForMaintenance({
+    sessionsRoot,
+    sessionId: args.sessionId,
+    expectedHeadUuid: head.uuid
+  });
+  try {
+    const event = await session.recordAgentEvent({
+      schemaVersion: 1,
+      runId: `context-${randomUUID()}`,
+      seq: 1,
+      type: "context.compacted",
+      data: {
+        taskId: identity.taskId,
+        instruction: identity.instruction,
+        summary,
+        manifest: projection.manifest
+      }
+    });
+    console.log(JSON.stringify({
+      status: "compacted",
+      sessionId: args.sessionId,
+      checkpointEventId: event.uuid,
+      manifest: projection.manifest
+    }, null, 2));
+  } finally {
+    await session.dispose();
+  }
+  return 0;
+}
+
 function sessionsRootFrom(args: readonly string[]): string {
   return resolve(valueAfter(args, "--sessions-dir") ?? "sessions");
 }
@@ -564,8 +741,12 @@ async function sessionCommand(args: readonly string[]): Promise<number> {
       }
       return 0;
     }
+    case "compact":
+      return await compactCommand(parseCompactArguments(rest));
     default:
-      throw new Error("Expected session list, show, resume, rewind, or fork");
+      throw new Error(
+        "Expected session list, show, resume, rewind, fork, or compact"
+      );
   }
 }
 
@@ -576,8 +757,10 @@ async function main(args: readonly string[]): Promise<number> {
         return await runCommand(parseRunArguments(args.slice(1)));
       case "session":
         return await sessionCommand(args.slice(1));
+      case "compact":
+        return await compactCommand(parseCompactArguments(args.slice(1)));
       default:
-        throw new Error("Expected run or session");
+        throw new Error("Expected run, compact, or session");
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

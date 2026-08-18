@@ -27,6 +27,9 @@ packages/core/
   src/task-spec.ts      Runtime validation for external TaskSpec JSON
   src/runtime.ts        Deterministic Agent loop, budgets and event emission
 
+packages/context/
+  src/full-compaction.ts  Pure ContextStrategy and Full Compaction projection
+
 packages/providers/
   src/scripted.ts       Deterministic provider for tests and offline scenarios
   src/openai.ts         OpenAI-compatible streaming provider
@@ -56,9 +59,10 @@ The intended workspace dependency graph is:
 
 ```text
 apps/cli ─┬─> core
+          ├─> context ─> core
           ├─> providers ─> core
           ├─> tools ─────> core
-          └─> session ───> core
+          └─> session ───> context ─> core
 ```
 
 Preserve these rules:
@@ -67,7 +71,8 @@ Preserve these rules:
 2. Providers translate an external model protocol into core `ModelResponse` values. They do not execute tools or own the Agent loop.
 3. Tools operate within the workspace supplied by the Host and must use the shared path-safety and limit helpers.
 4. Session persistence consumes core `AgentEvent` values. Core must remain usable without Session storage.
-5. `apps/cli` is the composition root. Provider selection, environment variables, filesystem paths and concrete registrations belong there.
+5. Context projection is pure and depends only on Core contracts. Session applies persisted Context checkpoints during replay.
+6. `apps/cli` is the composition root. Provider selection, environment variables, filesystem paths and concrete registrations belong there.
 
 ## Runtime data flow
 
@@ -80,6 +85,7 @@ TaskSpec JSON
   -> Runtime validates budgets and executes allowed Tools
   -> Runtime updates AgentState and emits ordered AgentEvents
   -> SessionEventSink appends enriched events to JSONL
+  -> Context checkpoints may replace only the model-visible projection
   -> Session projection can later rebuild resumable state
 ```
 
@@ -117,6 +123,9 @@ Important behavior:
 - Resume reuses the original Session ID and appends to its selected head.
 - Rewind selects a completed Step and lets the next run append a new branch in the same file.
 - Fork copies the selected chain into a self-contained child Session.
+- Full Compaction appends `context.compacted`; it never truncates canonical rows.
+- A Context checkpoint is valid only at a closed Tool-safe point and carries a
+  `ContextSelectionManifest` binding it to the exact source chain.
 - Rewind is conversation-only. It does not restore repository files.
 - A torn final write may be repaired at the end of the file; malformed complete rows or invalid graph/protocol transitions must not be silently accepted.
 
@@ -150,6 +159,9 @@ pnpm build
 Tests should be deterministic and should not require a real API key unless they are explicitly designated as manual integration scenarios. For behavior changes, add the narrow unit test first, then add an integration test when the contract crosses package boundaries.
 
 Session changes should cover both the live runtime state and the state reconstructed from JSONL. Branching tests should retain abandoned rows and verify that Resume selects the intended active chain.
+Context changes should additionally verify that old transcript bytes remain
+unchanged, Tool Call/Result pairs stay sealed, and manifest Hash mismatches fail
+closed.
 
 ## Contribution workflow
 

@@ -4,6 +4,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
+      "@repo-circuit/context": ["packages/context/src/index.ts"],
       "@repo-circuit/core": ["packages/core/src/index.ts"],
       "@repo-circuit/providers": ["packages/providers/src/index.ts"],
       "@repo-circuit/session": ["packages/session/src/index.ts"],

@@ -1,9 +1,11 @@
 import type {
   AgentMessage,
   AgentResumeState,
+  ContextSelectionManifest,
   ToolCall,
   TokenUsage
 } from "@repo-circuit/core";
+import { applyFullCompaction } from "@repo-circuit/context";
 
 import { SessionError } from "./errors.js";
 import type {
@@ -22,8 +24,9 @@ const ZERO_USAGE: TokenUsage = {
 
 type AssistantToolMessage = {
   readonly role: "assistant";
-  readonly content: "";
+  readonly content: string;
   readonly toolCalls: readonly ToolCall[];
+  readonly reasoningContent?: string;
 };
 
 function isAssistantToolMessage(
@@ -31,7 +34,6 @@ function isAssistantToolMessage(
 ): message is AssistantToolMessage {
   return (
     message?.role === "assistant" &&
-    message.content === "" &&
     "toolCalls" in message &&
     Array.isArray(message.toolCalls)
   );
@@ -57,6 +59,17 @@ function addToolCallToRunStepMessage(
         `Tool-call message for ${key} is inconsistent`
       );
     }
+    if (
+      (event.data.assistantContent !== undefined &&
+        event.data.assistantContent !== existing.content) ||
+      (event.data.reasoningContent !== undefined &&
+        event.data.reasoningContent !== existing.reasoningContent)
+    ) {
+      throw new SessionError(
+        "CORRUPT_EVENT_LOG",
+        `Tool-call assistant content for ${key} is inconsistent`
+      );
+    }
     const updated = [...messages];
     updated[existingIndex] = {
       ...existing,
@@ -65,7 +78,17 @@ function addToolCallToRunStepMessage(
     return updated;
   }
   messageIndexByRunStep.set(key, messages.length);
-  return [...messages, { role: "assistant", content: "", toolCalls: [call] }];
+  return [
+    ...messages,
+    {
+      role: "assistant",
+      content: event.data.assistantContent ?? "",
+      toolCalls: [call],
+      ...(event.data.reasoningContent === undefined
+        ? {}
+        : { reasoningContent: event.data.reasoningContent })
+    }
+  ];
 }
 
 interface ProjectionAccumulator {
@@ -77,11 +100,13 @@ interface ProjectionAccumulator {
   seenCallIds: Set<string>;
   pending: Map<string, PendingToolCall>;
   toolMessageIndexByRunStep: Map<string, number>;
+  contextSelectionManifest: ContextSelectionManifest | undefined;
 }
 
 function applyAgentEventToProjection(
   state: ProjectionAccumulator,
-  event: SessionLogEvent
+  event: SessionLogEvent,
+  sourceEventIds: readonly string[]
 ): void {
   switch (event.type) {
     case "run.begin":
@@ -138,7 +163,13 @@ function applyAgentEventToProjection(
     case "assistant.final":
       state.messages = [
         ...state.messages,
-        { role: "assistant", content: event.data.text }
+        {
+          role: "assistant",
+          content: event.data.text,
+          ...(event.data.reasoningContent === undefined
+            ? {}
+            : { reasoningContent: event.data.reasoningContent })
+        }
       ];
       return;
     case "step.end":
@@ -166,6 +197,29 @@ function applyAgentEventToProjection(
         ];
       }
       state.status = "interrupted";
+      return;
+    case "context.compacted":
+      if (state.pending.size > 0) {
+        throw new SessionError(
+          "CORRUPT_EVENT_LOG",
+          "Context compaction crosses a pending Tool call"
+        );
+      }
+      try {
+        state.messages = applyFullCompaction(
+          state.messages,
+          sourceEventIds,
+          event.data
+        );
+      } catch (error) {
+        throw new SessionError(
+          "CORRUPT_EVENT_LOG",
+          "Context compaction manifest is inconsistent",
+          { cause: error }
+        );
+      }
+      state.contextSelectionManifest = event.data.manifest;
+      state.toolMessageIndexByRunStep.clear();
   }
 }
 
@@ -175,11 +229,13 @@ function assertAgentSequence(chain: readonly SessionLogEvent[]): void {
         if (previous === undefined || event.runId !== previous.runId) {
             if (
                 event.seq !== 1 ||
-                (event.type !== "run.begin" && event.type !== "turn.interrupted")
+                (event.type !== "run.begin" &&
+                  event.type !== "turn.interrupted" &&
+                  event.type !== "context.compacted")
             ) {
                 throw new SessionError(
                     "CORRUPT_EVENT_LOG",
-                    `Run ${event.runId} must begin with run.begin or a pre-start interruption at seq 1`
+                    `Run ${event.runId} has an invalid seq 1 event`
                 );
             }
         } else if (event.seq !== previous.seq + 1) {
@@ -205,9 +261,11 @@ export function projectSession(
         lastCompletedStep: 0,
         seenCallIds: new Set(),
         pending: new Map(),
-        toolMessageIndexByRunStep: new Map()
+        toolMessageIndexByRunStep: new Map(),
+        contextSelectionManifest: undefined
     };
 
+    const sourceEventIds: string[] = [];
     for (const event of chain) {
         if (event.sessionId !== sessionId) {
             throw new SessionError(
@@ -215,7 +273,8 @@ export function projectSession(
                 `Selected history contains an event owned by ${event.sessionId}`
             );
         }
-        applyAgentEventToProjection(state, event);
+        applyAgentEventToProjection(state, event, sourceEventIds);
+        sourceEventIds.push(event.uuid);
     }
 
     return {
@@ -227,6 +286,9 @@ export function projectSession(
         lastCompletedStep: state.lastCompletedStep,
         seenCallIds: [...state.seenCallIds],
         pendingToolCalls: [...state.pending.values()],
+        ...(state.contextSelectionManifest === undefined
+          ? {}
+          : { contextSelectionManifest: state.contextSelectionManifest })
     }
 }
 
@@ -335,6 +397,7 @@ export function prepareResume(
             event?.type === "run.begin" ||
             event?.type === "usage.recorded" ||
             event?.type === "step.end" ||
+            event?.type === "context.compacted" ||
             (index === 0 && event?.type === "turn.interrupted")
         ) {
             safeIndex = index;
@@ -360,7 +423,8 @@ export function prepareResume(
         };
     }
     const terminalOnly = tail.every((event) =>
-        ["run.end", "run.error", "turn.interrupted"].includes(event.type)
+        ["run.end", "run.error", "turn.interrupted", "context.compacted"]
+          .includes(event.type)
     );
     return readyFromPrefix(
         chain,

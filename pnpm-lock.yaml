@@ -26,6 +26,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@repo-circuit/context':
+        specifier: workspace:*
+        version: link:../../packages/context
       '@repo-circuit/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -39,6 +42,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tools
 
+  packages/context:
+    dependencies:
+      '@repo-circuit/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/core: {}
 
   packages/providers:
@@ -49,6 +58,9 @@ importers:
 
   packages/session:
     dependencies:
+      '@repo-circuit/context':
+        specifier: workspace:*
+        version: link:../context
       '@repo-circuit/core':
         specifier: workspace:*
         version: link:../core

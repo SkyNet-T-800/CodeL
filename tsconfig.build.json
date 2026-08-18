@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/core" },
+    { "path": "./packages/context" },
     { "path": "./packages/session" },
     { "path": "./packages/providers" },
     { "path": "./packages/tools" },
